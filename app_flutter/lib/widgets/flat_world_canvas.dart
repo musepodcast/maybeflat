@@ -1112,9 +1112,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     }
 
     final nextMatrix = currentMatrix
-      ..translate(focalPoint.dx, focalPoint.dy)
-      ..scale(appliedScale)
-      ..translate(-focalPoint.dx, -focalPoint.dy);
+      ..translateByDouble(focalPoint.dx, focalPoint.dy, 0, 1)
+      ..scaleByDouble(appliedScale, appliedScale, 1, 1)
+      ..translateByDouble(-focalPoint.dx, -focalPoint.dy, 0, 1);
 
     _transformationController.value = nextMatrix;
     _scheduleInteractionEnd();
@@ -1130,7 +1130,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       return;
     }
 
-    final nextMatrix = currentMatrix..scale(appliedScale);
+    final nextMatrix = currentMatrix
+      ..scaleByDouble(appliedScale, appliedScale, 1, 1);
     _transformationController.value = nextMatrix;
     _scheduleInteractionEnd();
   }
@@ -1139,9 +1140,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     _beginInteraction();
     final currentMatrix = _transformationController.value.clone();
     final nextMatrix = currentMatrix
-      ..translate(focalPoint.dx, focalPoint.dy)
+      ..translateByDouble(focalPoint.dx, focalPoint.dy, 0, 1)
       ..rotateZ(angleRadians)
-      ..translate(-focalPoint.dx, -focalPoint.dy);
+      ..translateByDouble(-focalPoint.dx, -focalPoint.dy, 0, 1);
 
     setState(() {
       _rotationRadians += angleRadians;
@@ -1698,7 +1699,7 @@ class _BaseMapPainter extends CustomPainter {
 
 class _FlatWorldPainter extends CustomPainter {
   _FlatWorldPainter({
-    Listenable? repaint,
+    super.repaint,
     required this.projectedScene,
     required this.markerAnchorPoints,
     required this.labelAnchorPoints,
@@ -1720,7 +1721,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.viewRotationRadians,
     required this.animationValue,
     required this.isInteracting,
-  }) : super(repaint: repaint);
+  });
 
   final _ProjectedSceneCache projectedScene;
   final List<Offset> markerAnchorPoints;
@@ -1851,43 +1852,6 @@ class _FlatWorldPainter extends CustomPainter {
     );
   }
 
-  Path _buildShapePath(
-    Offset center,
-    double mapRadius,
-    List<MapRing> rings,
-  ) {
-    final path = Path()..fillType = PathFillType.evenOdd;
-    for (final ring in rings) {
-      final firstPoint = _project(
-        center,
-        mapRadius,
-        ring.points.first.x,
-        ring.points.first.y,
-      );
-      path.moveTo(firstPoint.dx, firstPoint.dy);
-
-      for (final point in ring.points.skip(1)) {
-        final projected = _project(center, mapRadius, point.x, point.y);
-        path.lineTo(projected.dx, projected.dy);
-      }
-
-      if (ring.closed) {
-        path.close();
-      }
-    }
-    return path;
-  }
-
-  List<Offset> _projectRing(
-    Offset center,
-    double mapRadius,
-    MapRing ring,
-  ) {
-    return ring.points
-        .map((point) => _project(center, mapRadius, point.x, point.y))
-        .toList(growable: false);
-  }
-
   Offset _resolveDisplayPoint({
     required Offset originalPoint,
     required Path landClipPath,
@@ -1902,64 +1866,6 @@ class _FlatWorldPainter extends CustomPainter {
       viewScale: viewScale,
       maxSnapDistanceInScreen: maxSnapDistanceInScreen,
     );
-  }
-
-  Offset _insetPointInsideLand(
-    Offset snappedPoint, {
-    required Offset originalPoint,
-    required Path landClipPath,
-  }) {
-    return _insetPointInsideLandForDisplay(
-      snappedPoint,
-      originalPoint: originalPoint,
-      landClipPath: landClipPath,
-      viewScale: viewScale,
-    );
-  }
-
-  Offset _normalizeOffset(Offset offset) {
-    return _normalizeOffsetForDisplay(offset);
-  }
-
-  Offset? _findNearestLandEdgePoint(
-    Offset point,
-    List<List<Offset>> projectedLandRings,
-  ) {
-    return _findNearestLandEdgePointForDisplay(point, projectedLandRings);
-  }
-
-  Offset _nearestPointOnSegment(Offset point, Offset start, Offset end) {
-    return _nearestPointOnSegmentForDisplay(point, start, end);
-  }
-
-  void _paintCoastStroke(
-    Canvas canvas,
-    Path path,
-    MapShape shape,
-    bool useFastCoastRendering,
-    double viewScale,
-  ) {
-    final strokeWidth = shape.name == 'Antarctica Rim'
-        ? _screenStableRadius(
-            useFastCoastRendering ? 2.6 : 3.4,
-            viewScale,
-            minRadius: 1.6,
-          )
-        : _screenStableRadius(
-            useFastCoastRendering ? 0.55 : 0.75,
-            viewScale,
-            minRadius: 0.28,
-          );
-    final strokePaint = Paint()
-      ..color = shape.strokeColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = shape.name == 'Antarctica Rim'
-          ? StrokeCap.round
-          : StrokeCap.butt
-      ..strokeJoin = StrokeJoin.round
-      ..isAntiAlias = true;
-    canvas.drawPath(path, strokePaint);
   }
 
   void _paintGraticule(
@@ -2081,10 +1987,6 @@ class _FlatWorldPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: 120);
 
-      final labelOffset = Offset(
-        entry.bounds.center.dx - (labelPainter.width / 2),
-        entry.bounds.center.dy - (labelPainter.height / 2),
-      );
       _paintUprightLabel(
         canvas: canvas,
         center: entry.bounds.center,

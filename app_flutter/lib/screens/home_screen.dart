@@ -94,7 +94,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _maxRouteStops,
     null,
   );
-  List<String?> _routePointSources = List<String?>.filled(_maxRouteStops, null);
+  final List<String?> _routePointSources = List<String?>.filled(
+    _maxRouteStops,
+    null,
+  );
   List<MeasureResult> _routeLegs = const [];
 
   @override
@@ -624,7 +627,7 @@ class _HomeScreenState extends State<HomeScreen> {
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
-    if (pickedDate == null || !mounted) {
+    if (pickedDate == null || !context.mounted) {
       return;
     }
 
@@ -632,7 +635,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(_astronomyCustomTime),
     );
-    if (pickedTime == null || !mounted) {
+    if (pickedTime == null || !context.mounted) {
       return;
     }
 
@@ -1389,7 +1392,7 @@ class _IntroPanel extends StatelessWidget {
                 onChanged: onShowGridChanged,
               ),
               DropdownButtonFormField<int>(
-                value: gridStepDegrees,
+                initialValue: gridStepDegrees,
                 decoration: const InputDecoration(
                   labelText: 'Grid interval',
                   helperText: 'Multiples of 5 degrees',
@@ -1407,7 +1410,7 @@ class _IntroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<_OuterEdgeMode>(
-                value: outerEdgeMode,
+                initialValue: outerEdgeMode,
                 decoration: const InputDecoration(
                   labelText: 'Outer edge source',
                   border: OutlineInputBorder(),
@@ -1484,7 +1487,7 @@ class _IntroPanel extends StatelessWidget {
                 onChanged: onShowMoonPathChanged,
               ),
               DropdownButtonFormField<_AstronomyTimeMode>(
-                value: astronomyTimeMode,
+                initialValue: astronomyTimeMode,
                 decoration: const InputDecoration(
                   labelText: 'Astronomy time',
                   border: OutlineInputBorder(),
@@ -1636,7 +1639,7 @@ class _IntroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<_AstronomyEventFilter>(
-                value: astronomyEventFilter,
+                initialValue: astronomyEventFilter,
                 decoration: InputDecoration(
                   labelText: 'Event Filter',
                   border: const OutlineInputBorder(),
@@ -1668,7 +1671,7 @@ class _IntroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: astronomyEclipseSubtype,
+                initialValue: astronomyEclipseSubtype,
                 decoration: InputDecoration(
                   labelText: 'Eclipse Type',
                   border: const OutlineInputBorder(),
@@ -2008,7 +2011,7 @@ class _IntroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<_DistanceUnitDisplay>(
-                value: distanceUnitDisplay,
+                initialValue: distanceUnitDisplay,
                 decoration: const InputDecoration(
                   labelText: 'Distance units',
                   border: OutlineInputBorder(),
@@ -2032,7 +2035,7 @@ class _IntroPanel extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<int>(
-                value: stopCount,
+                initialValue: stopCount,
                 decoration: const InputDecoration(
                   labelText: 'How many stops',
                   border: OutlineInputBorder(),
