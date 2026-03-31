@@ -82,3 +82,31 @@ The Flutter client is configured to call `http://127.0.0.1:8002` by default.
 2. Add a tile or vector rendering layer for coastlines and political boundaries.
 3. Build a real dataset transform pipeline for coastlines, labels, and the Antarctica perimeter ring.
 4. Add project save/load, route plotting, and measurement history.
+
+## Release Checklist
+
+Use this simple flow when cutting a release from `main`.
+
+1. Make sure your feature branches are merged into `main`.
+2. Pull the latest `main`.
+3. Run the local checks you care about.
+4. Update `CHANGELOG.md`.
+5. Commit release-related changes if needed.
+6. Tag the release using semantic versioning.
+7. Push `main` and the tag to GitHub.
+
+Example:
+
+```powershell
+git checkout main
+git pull
+git tag -a v1.0.1 -m "Maybeflat v1.0.1"
+git push origin main
+git push origin v1.0.1
+```
+
+Version pattern:
+
+- patch: `v1.0.1`
+- minor: `v1.1.0`
+- major: `v2.0.0`
