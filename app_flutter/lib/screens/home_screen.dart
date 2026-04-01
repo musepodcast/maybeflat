@@ -18,6 +18,7 @@ enum _DistanceUnitDisplay { both, kilometers, miles }
 enum _OuterEdgeMode { coastline, country, both }
 enum _AstronomyTimeMode { current, custom }
 enum _AstronomyEventFilter { all, solar, lunar }
+enum _TimeZoneMode { approximate, real }
 
 const int _minRouteStops = 2;
 const int _maxRouteStops = 6;
@@ -55,6 +56,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showAstronomyEventPicker = false;
   double _mapViewScale = 1.0;
   bool _showGrid = true;
+  bool _showTimeZones = false;
+  _TimeZoneMode _timeZoneMode = _TimeZoneMode.approximate;
   bool _showLabels = true;
   bool _showShapeLabels = false;
   bool _showStateBoundaries = true;
@@ -79,6 +82,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _usingCountryBoundaries = false;
   String _stateBoundarySource = 'unavailable';
   bool _usingStateBoundaries = false;
+  String _timezoneSource = 'unavailable';
+  bool _usingRealTimezones = false;
   bool _stateBoundaryLayerLoaded = false;
   List<PlaceMarker> _markers = const [];
   List<MapShape> _shapes = const [];
@@ -195,6 +200,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _usingCountryBoundaries = false;
           _stateBoundarySource = 'unavailable';
           _usingStateBoundaries = false;
+          _timezoneSource = 'unavailable';
+          _usingRealTimezones = false;
           _stateBoundaryLayerLoaded = false;
           _markers = const [];
           _shapes = const [];
@@ -257,6 +264,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _usingCountryBoundaries = false;
           _stateBoundarySource = 'unavailable';
           _usingStateBoundaries = false;
+          _timezoneSource = 'unavailable';
+          _usingRealTimezones = false;
           _stateBoundaryLayerLoaded = false;
           _markers = const [];
           _shapes = const [];
@@ -339,6 +348,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _usingCountryBoundaries = scene.usingCountryBoundaries;
       _stateBoundarySource = scene.stateBoundarySource;
       _usingStateBoundaries = scene.usingStateBoundaries;
+      _timezoneSource = scene.timezoneSource;
+      _usingRealTimezones = scene.usingRealTimezones;
       _stateBoundaryLayerLoaded = scene.shapes.any(
         (shape) => shape.role == 'state_boundary',
       );
@@ -990,6 +1001,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final intro = _IntroPanel(
           showGrid: _showGrid,
+          showTimeZones: _showTimeZones,
+          timeZoneMode: _timeZoneMode,
           gridStepDegrees: _gridStepDegrees,
           outerEdgeMode: _outerEdgeMode,
           showLabels: _showLabels,
@@ -1012,6 +1025,8 @@ class _HomeScreenState extends State<HomeScreen> {
           usingCountryBoundaries: _usingCountryBoundaries,
           stateBoundarySource: _stateBoundarySource,
           usingStateBoundaries: _usingStateBoundaries,
+          timezoneSource: _timezoneSource,
+          usingRealTimezones: _usingRealTimezones,
           astronomySnapshot: _astronomySnapshot,
           astronomyEvents: _filteredAstronomyEvents,
           selectedAstronomyEvent: _selectedAstronomyEvent,
@@ -1036,6 +1051,18 @@ class _HomeScreenState extends State<HomeScreen> {
           distanceUnitDisplay: _distanceUnitDisplay,
           activePickStopIndex: _pickStopIndex,
           onShowGridChanged: (value) => setState(() => _showGrid = value),
+          onShowTimeZonesChanged: (value) => setState(() {
+            _showTimeZones = value;
+            _timeZoneMode = _TimeZoneMode.approximate;
+          }),
+          onTimeZoneModeChanged: (value) {
+            if (value == null || value != _TimeZoneMode.approximate) {
+              return;
+            }
+            setState(() {
+              _timeZoneMode = value;
+            });
+          },
           onGridStepChanged: (value) {
             if (value == null) {
               return;
@@ -1142,6 +1169,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       shapes: _shapes,
                       labels: _labels,
                       showGrid: _showGrid,
+                      showTimeZones: _showTimeZones,
+                      useRealTimeZones: _timeZoneMode == _TimeZoneMode.real,
                       gridStepDegrees: _gridStepDegrees,
                       edgeRenderMode: switch (_outerEdgeMode) {
                         _OuterEdgeMode.coastline => EdgeRenderMode.coastline,
@@ -1204,6 +1233,8 @@ class _HomeScreenState extends State<HomeScreen> {
 class _IntroPanel extends StatelessWidget {
   const _IntroPanel({
     required this.showGrid,
+    required this.showTimeZones,
+    required this.timeZoneMode,
     required this.gridStepDegrees,
     required this.outerEdgeMode,
     required this.showLabels,
@@ -1226,6 +1257,8 @@ class _IntroPanel extends StatelessWidget {
     required this.usingCountryBoundaries,
     required this.stateBoundarySource,
     required this.usingStateBoundaries,
+    required this.timezoneSource,
+    required this.usingRealTimezones,
     required this.astronomySnapshot,
     required this.astronomyEvents,
     required this.selectedAstronomyEvent,
@@ -1248,6 +1281,8 @@ class _IntroPanel extends StatelessWidget {
     required this.distanceUnitDisplay,
     required this.activePickStopIndex,
     required this.onShowGridChanged,
+    required this.onShowTimeZonesChanged,
+    required this.onTimeZoneModeChanged,
     required this.onGridStepChanged,
     required this.onOuterEdgeModeChanged,
     required this.onShowLabelsChanged,
@@ -1274,6 +1309,8 @@ class _IntroPanel extends StatelessWidget {
   });
 
   final bool showGrid;
+  final bool showTimeZones;
+  final _TimeZoneMode timeZoneMode;
   final int gridStepDegrees;
   final _OuterEdgeMode outerEdgeMode;
   final bool showLabels;
@@ -1296,6 +1333,8 @@ class _IntroPanel extends StatelessWidget {
   final bool usingCountryBoundaries;
   final String stateBoundarySource;
   final bool usingStateBoundaries;
+  final String timezoneSource;
+  final bool usingRealTimezones;
   final AstronomySnapshot? astronomySnapshot;
   final List<AstronomyEvent> astronomyEvents;
   final AstronomyEvent? selectedAstronomyEvent;
@@ -1318,6 +1357,8 @@ class _IntroPanel extends StatelessWidget {
   final _DistanceUnitDisplay distanceUnitDisplay;
   final int? activePickStopIndex;
   final ValueChanged<bool> onShowGridChanged;
+  final ValueChanged<bool> onShowTimeZonesChanged;
+  final ValueChanged<_TimeZoneMode?> onTimeZoneModeChanged;
   final ValueChanged<int?> onGridStepChanged;
   final ValueChanged<_OuterEdgeMode?> onOuterEdgeModeChanged;
   final ValueChanged<bool> onShowLabelsChanged;
@@ -1385,12 +1426,51 @@ class _IntroPanel extends StatelessWidget {
                 value: 'Measured on the flat plane',
               ),
               const SizedBox(height: 22),
+              _CollapsiblePanel(
+                title: 'Map Controls',
+                subtitle: 'Grid, time zones, labels, and boundaries',
+                initiallyExpanded: false,
+                children: [
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: showGrid,
                 title: const Text('Show lat/lon grid'),
                 onChanged: onShowGridChanged,
               ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: showTimeZones,
+                title: const Text('Show time zones'),
+                subtitle: const Text(
+                  'Approximate UTC wedges from longitude',
+                ),
+                onChanged: onShowTimeZonesChanged,
+              ),
+              DropdownButtonFormField<_TimeZoneMode>(
+                initialValue: _TimeZoneMode.approximate,
+                decoration: const InputDecoration(
+                  labelText: 'Time-zone mode',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: const [
+                  const DropdownMenuItem(
+                    value: _TimeZoneMode.approximate,
+                    child: Text('Approximate'),
+                  ),
+                ],
+                onChanged: showTimeZones ? onTimeZoneModeChanged : null,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Real time zones are blocked for now. Approximate mode remains available.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF335C67),
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 12),
               DropdownButtonFormField<int>(
                 initialValue: gridStepDegrees,
                 decoration: const InputDecoration(
@@ -1453,27 +1533,16 @@ class _IntroPanel extends StatelessWidget {
                     ? onShowStateBoundariesChanged
                     : null,
               ),
+                ],
+              ),
               const SizedBox(height: 18),
               const Divider(),
               const SizedBox(height: 18),
-              const Text(
-                'Astronomy Overlay',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Show the live sun and moon over the full map, including lit and dark regions from above.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: Color(0xFF335C67),
-                ),
-              ),
-              const SizedBox(height: 12),
+              _CollapsiblePanel(
+                title: 'Astronomy Overlay',
+                subtitle: 'Sun, moon, observer, and event controls',
+                initiallyExpanded: false,
+                children: [
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: showSunPath,
@@ -1917,7 +1986,14 @@ class _IntroPanel extends StatelessWidget {
                   ),
                 ],
               ],
+                ],
+              ),
               const SizedBox(height: 12),
+              _CollapsiblePanel(
+                title: 'Scene Data',
+                subtitle: 'Backend reload and source details',
+                initiallyExpanded: false,
+                children: [
               FilledButton(
                 onPressed: isLoading ? null : () => onReload(),
                 style: FilledButton.styleFrom(
@@ -1989,27 +2065,16 @@ class _IntroPanel extends StatelessWidget {
                   color: Color(0xFF112A46),
                 ),
               ),
+                ],
+              ),
               const SizedBox(height: 18),
               const Divider(),
               const SizedBox(height: 18),
-              const Text(
-                'Route Planner',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Build an ordered route with cities or manual map picks. The route follows the stop order you choose.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: Color(0xFF335C67),
-                ),
-              ),
-              const SizedBox(height: 14),
+              _CollapsiblePanel(
+                title: 'Route Planner',
+                subtitle: 'Cities, map picks, and ordered route distance',
+                initiallyExpanded: false,
+                children: [
               DropdownButtonFormField<_DistanceUnitDisplay>(
                 initialValue: distanceUnitDisplay,
                 decoration: const InputDecoration(
@@ -2171,6 +2236,8 @@ class _IntroPanel extends StatelessWidget {
                   ),
                 ),
               ],
+                ],
+              ),
               if (error != null) ...[
                 const SizedBox(height: 10),
                 Text(
@@ -2330,6 +2397,64 @@ class _IntroPanel extends StatelessWidget {
         ? 12
         : (local.hour > 12 ? local.hour - 12 : local.hour);
     return '${local.month}/${local.day}/${local.year} $hour:$minute $meridiem';
+  }
+}
+
+class _CollapsiblePanel extends StatelessWidget {
+  const _CollapsiblePanel({
+    required this.title,
+    required this.children,
+    this.subtitle,
+    this.initiallyExpanded = false,
+  });
+
+  final String title;
+  final String? subtitle;
+  final bool initiallyExpanded;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8F3E8),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFD7E0E5)),
+        ),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          collapsedShape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF112A46),
+            ),
+          ),
+          subtitle: subtitle == null
+              ? null
+              : Text(
+                  subtitle!,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF335C67),
+                    height: 1.35,
+                  ),
+                ),
+          children: children,
+        ),
+      ),
+    );
   }
 }
 

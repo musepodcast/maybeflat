@@ -43,6 +43,8 @@ class MapShape {
     required this.fill,
     required this.stroke,
     required this.rings,
+    this.timeZoneLabel,
+    this.timeZoneOffsetMinutes,
   });
 
   final String name;
@@ -50,6 +52,8 @@ class MapShape {
   final String fill;
   final String stroke;
   final List<MapRing> rings;
+  final String? timeZoneLabel;
+  final int? timeZoneOffsetMinutes;
 
   Color get fillColor => _parseHexColor(fill);
   Color get strokeColor => _parseHexColor(stroke);
@@ -63,6 +67,8 @@ class MapShape {
       role: json['role'] as String? ?? 'land',
       fill: json['fill'] as String? ?? '#CCCCCC',
       stroke: json['stroke'] as String? ?? '#333333',
+      timeZoneLabel: json['time_zone_label'] as String?,
+      timeZoneOffsetMinutes: json['time_zone_offset_minutes'] as int?,
       rings: ringPayload != null
           ? ringPayload
               .map((ring) => MapRing.fromJson(ring as Map<String, dynamic>))

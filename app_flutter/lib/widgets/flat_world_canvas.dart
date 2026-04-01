@@ -209,6 +209,23 @@ double _screenStableRadius(
 
 bool _isCityLayer(String layer) => layer.startsWith('city');
 
+List<int> _buildTimeZoneOffsets() {
+  return List<int>.generate(24, (index) => index - 12, growable: false);
+}
+
+String _formatUtcOffsetLabel(int offsetHours) {
+  if (offsetHours == 0) {
+    return 'UTC';
+  }
+  final sign = offsetHours > 0 ? '+' : '';
+  return 'UTC$sign$offsetHours';
+}
+
+double _timeZoneLabelFontSize(double viewScale) {
+  final scaledBase = 9.8 / math.pow(viewScale.clamp(1.0, 24.0), 0.14);
+  return scaledBase.clamp(7.6, 9.8).toDouble();
+}
+
 Offset _screenOffsetToScene(
   Offset offset,
   double viewScale,
@@ -331,6 +348,7 @@ class _ProjectedSceneCache {
     required this.landEntries,
     required this.boundaryEntries,
     required this.stateBoundaryEntries,
+    required this.timeZoneEntries,
     required this.landClipPath,
     required this.projectedLandRings,
   });
@@ -343,6 +361,7 @@ class _ProjectedSceneCache {
   final List<_ProjectedShapeEntry> landEntries;
   final List<_ProjectedShapeEntry> boundaryEntries;
   final List<_ProjectedShapeEntry> stateBoundaryEntries;
+  final List<_ProjectedShapeEntry> timeZoneEntries;
   final Path landClipPath;
   final List<List<Offset>> projectedLandRings;
 }
@@ -499,6 +518,8 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.shapes,
     required this.labels,
     required this.showGrid,
+    required this.showTimeZones,
+    required this.useRealTimeZones,
     required this.gridStepDegrees,
     required this.edgeRenderMode,
     required this.showLabels,
@@ -521,6 +542,8 @@ class FlatWorldCanvas extends StatefulWidget {
   final List<MapShape> shapes;
   final List<MapLabel> labels;
   final bool showGrid;
+  final bool showTimeZones;
+  final bool useRealTimeZones;
   final int gridStepDegrees;
   final EdgeRenderMode edgeRenderMode;
   final bool showLabels;
@@ -719,6 +742,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                       markers: widget.markers,
                                       labels: widget.labels,
                                       showGrid: widget.showGrid,
+                                      showTimeZones: widget.showTimeZones,
+                                      useRealTimeZones: widget.useRealTimeZones,
                                       gridStepDegrees: widget.gridStepDegrees,
                                       edgeRenderMode: widget.edgeRenderMode,
                                       showLabels: widget.showLabels,
@@ -1049,6 +1074,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     final landEntries = <_ProjectedShapeEntry>[];
     final boundaryEntries = <_ProjectedShapeEntry>[];
     final stateBoundaryEntries = <_ProjectedShapeEntry>[];
+    final timeZoneEntries = <_ProjectedShapeEntry>[];
     final landClipPath = Path()..fillType = PathFillType.evenOdd;
     final projectedLandRings = <List<Offset>>[];
 
@@ -1075,6 +1101,10 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
         stateBoundaryEntries.add(entry);
         continue;
       }
+      if (shape.role == 'timezone') {
+        timeZoneEntries.add(entry);
+        continue;
+      }
 
       landEntries.add(entry);
       if (!hasClosedRing) {
@@ -1095,6 +1125,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       landEntries: landEntries,
       boundaryEntries: boundaryEntries,
       stateBoundaryEntries: stateBoundaryEntries,
+      timeZoneEntries: timeZoneEntries,
       landClipPath: landClipPath,
       projectedLandRings: projectedLandRings,
     );
@@ -1706,6 +1737,8 @@ class _FlatWorldPainter extends CustomPainter {
     required this.markers,
     required this.labels,
     required this.showGrid,
+    required this.showTimeZones,
+    required this.useRealTimeZones,
     required this.gridStepDegrees,
     required this.edgeRenderMode,
     required this.showLabels,
@@ -1729,6 +1762,8 @@ class _FlatWorldPainter extends CustomPainter {
   final List<PlaceMarker> markers;
   final List<MapLabel> labels;
   final bool showGrid;
+  final bool showTimeZones;
+  final bool useRealTimeZones;
   final int gridStepDegrees;
   final EdgeRenderMode edgeRenderMode;
   final bool showLabels;
@@ -1762,6 +1797,14 @@ class _FlatWorldPainter extends CustomPainter {
         gridStepDegrees,
         viewScale,
       );
+    }
+
+    if (showTimeZones) {
+      if (useRealTimeZones && projectedScene.timeZoneEntries.isNotEmpty) {
+        _paintRealTimeZones(canvas);
+      } else {
+        _paintTimeZones(canvas, center, mapRadius);
+      }
     }
 
     if (showShapeLabels && !isInteracting) {
@@ -1993,6 +2036,160 @@ class _FlatWorldPainter extends CustomPainter {
         labelPainter: labelPainter,
       );
     }
+  }
+
+  void _paintTimeZones(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+  ) {
+    final worldClipPath = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: mapRadius));
+    final timeZoneOffsets = _buildTimeZoneOffsets();
+
+    canvas.save();
+    canvas.clipPath(worldClipPath);
+    for (var index = 0; index < timeZoneOffsets.length; index += 1) {
+      final offsetHours = timeZoneOffsets[index];
+      final centerLongitude = offsetHours * 15.0;
+      final startLongitude = centerLongitude - 7.5;
+      final endLongitude = centerLongitude + 7.5;
+      final wedgePath = Path()..moveTo(center.dx, center.dy);
+      final startPoint = _projectLatLon(center, mapRadius, -90, startLongitude);
+      wedgePath.lineTo(startPoint.dx, startPoint.dy);
+      for (var step = 1; step <= 12; step += 1) {
+        final t = step / 12;
+        final longitude =
+            startLongitude + ((endLongitude - startLongitude) * t);
+        final edgePoint = _projectLatLon(center, mapRadius, -90, longitude);
+        wedgePath.lineTo(edgePoint.dx, edgePoint.dy);
+      }
+      wedgePath.close();
+
+      final fillPaint = Paint()
+        ..color = index.isEven
+            ? const Color(0x122E557A)
+            : const Color(0x060F2940)
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = true;
+      canvas.drawPath(wedgePath, fillPaint);
+    }
+    canvas.restore();
+
+    final spokePaint = Paint()
+      ..color = const Color(0x55557886)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _screenStableRadius(0.9, viewScale, minRadius: 0.45)
+      ..isAntiAlias = true;
+
+    for (final offsetHours in timeZoneOffsets) {
+      final boundaryLongitude = (offsetHours * 15.0) - 7.5;
+      final edgePoint = _projectLatLon(center, mapRadius, -90, boundaryLongitude);
+      canvas.drawLine(center, edgePoint, spokePaint);
+    }
+
+    if (isInteracting && viewScale > 2.4) {
+      return;
+    }
+
+    final labelLatitude = viewScale >= 2.2 ? -76.0 : -82.0;
+    final labelFontSize = _timeZoneLabelFontSize(viewScale);
+    for (final offsetHours in timeZoneOffsets) {
+      final labelPoint = _projectLatLon(
+        center,
+        mapRadius,
+        labelLatitude,
+        offsetHours * 15.0,
+      );
+      final labelPainter = TextPainter(
+        text: TextSpan(
+          text: _formatUtcOffsetLabel(offsetHours),
+          style: TextStyle(
+            color: const Color(0xFF10283A),
+            fontSize: labelFontSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.1,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 84);
+
+      _paintUprightLabel(
+        canvas: canvas,
+        center: labelPoint,
+        labelPainter: labelPainter,
+      );
+    }
+  }
+
+  void _paintRealTimeZones(Canvas canvas) {
+    if (projectedScene.timeZoneEntries.isEmpty) {
+      return;
+    }
+
+    final useLightRender = projectedScene.timeZoneEntries.length > 800;
+    canvas.save();
+    canvas.clipPath(projectedScene.landClipPath);
+    for (var index = 0; index < projectedScene.timeZoneEntries.length; index += 1) {
+      final entry = projectedScene.timeZoneEntries[index];
+      if (!entry.hasClosedRing) {
+        continue;
+      }
+
+      final fillPaint = Paint()
+        ..color = entry.shape.fillColor.withAlpha(useLightRender ? 78 : 104)
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = true;
+      canvas.drawPath(entry.path, fillPaint);
+    }
+
+    for (final entry in projectedScene.timeZoneEntries) {
+      final strokePaint = Paint()
+        ..color = entry.shape.strokeColor.withAlpha(useLightRender ? 188 : 228)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _screenStableRadius(
+          useLightRender ? 1.2 : 1.55,
+          viewScale,
+          minRadius: 0.65,
+        )
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true;
+      canvas.drawPath(entry.path, strokePaint);
+    }
+
+    if (!isInteracting) {
+      for (final entry in projectedScene.timeZoneEntries) {
+        final timeZoneLabel = entry.shape.timeZoneLabel;
+        if (timeZoneLabel == null || timeZoneLabel.isEmpty) {
+          continue;
+        }
+        if (entry.bounds.width * viewScale < 54 ||
+            entry.bounds.height * viewScale < 20) {
+          continue;
+        }
+
+        final labelPainter = TextPainter(
+          text: TextSpan(
+            text: timeZoneLabel,
+            style: TextStyle(
+              color: const Color(0xFF10283A),
+              fontSize: _timeZoneLabelFontSize(viewScale),
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.1,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: 86);
+
+        _paintUprightLabel(
+          canvas: canvas,
+          center: entry.bounds.center,
+          labelPainter: labelPainter,
+        );
+      }
+    }
+    canvas.restore();
   }
 
   void _paintStateBoundaries(Canvas canvas) {
@@ -2571,6 +2768,8 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.astronomyObserverName != astronomyObserverName ||
         oldDelegate.routePoints != routePoints ||
         oldDelegate.labels != labels ||
+        oldDelegate.showTimeZones != showTimeZones ||
+        oldDelegate.useRealTimeZones != useRealTimeZones ||
         oldDelegate.labelScale != labelScale ||
         oldDelegate.viewScale != viewScale ||
         oldDelegate.viewRotationRadians != viewRotationRadians ||

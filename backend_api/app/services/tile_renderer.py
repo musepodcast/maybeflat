@@ -83,17 +83,21 @@ def _get_indexed_scene(
     tuple[IndexedShape, ...],
     tuple[IndexedShape, ...],
     tuple[IndexedShape, ...],
+    tuple[IndexedShape, ...],
 ]:
     scene = _get_scene(detail)
     land_shapes: list[IndexedShape] = []
     boundary_shapes: list[IndexedShape] = []
     state_boundary_shapes: list[IndexedShape] = []
+    timezone_shapes: list[IndexedShape] = []
     for shape in scene.shapes:
         indexed_shape = (shape, _shape_bounds(shape))
         if shape.role == "boundary":
             boundary_shapes.append(indexed_shape)
         elif shape.role == "state_boundary":
             state_boundary_shapes.append(indexed_shape)
+        elif shape.role == "timezone":
+            timezone_shapes.append(indexed_shape)
         else:
             land_shapes.append(indexed_shape)
     return (
@@ -101,6 +105,7 @@ def _get_indexed_scene(
         tuple(land_shapes),
         tuple(boundary_shapes),
         tuple(state_boundary_shapes),
+        tuple(timezone_shapes),
     )
 
 
@@ -117,7 +122,7 @@ def _render_tile_png_cached(
     draw = ImageDraw.Draw(tile_image, "RGBA")
 
     tile_bounds = _tile_bounds(z, x, y)
-    _, indexed_land_shapes, indexed_boundary_shapes, _ = _get_indexed_scene(detail)
+    _, indexed_land_shapes, indexed_boundary_shapes, _, _ = _get_indexed_scene(detail)
     land_shapes = [
         shape
         for shape, bounds in indexed_land_shapes

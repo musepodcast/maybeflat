@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from math import atan, atan2, cos, radians, sin, sqrt, tan
+from datetime import datetime, timezone
+from math import atan, atan2, ceil, cos, floor, radians, sin, sqrt, tan
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.data.coastline_loader import (
     get_state_boundary_dataset_status,
     load_boundary_shapes,
     load_scene_shapes,
     load_state_boundary_shapes,
+    load_timezone_boundary_shapes,
 )
 from app.data.label_layers import LABEL_LAYERS
 from app.data.prototype_scene import SEED_MARKERS
@@ -32,6 +35,35 @@ WGS84_A_METERS = 6_378_137.0
 WGS84_F = 1 / 298.257223563
 WGS84_B_METERS = (1 - WGS84_F) * WGS84_A_METERS
 EARTH_MEAN_RADIUS_METERS = 6_371_008.8
+TIME_ZONE_BASE_PALETTE = {
+    -12: "#B64E4E",
+    -11: "#C35C48",
+    -10: "#CF6B45",
+    -9: "#DA7C46",
+    -8: "#E1914D",
+    -7: "#E4A85B",
+    -6: "#E2BE68",
+    -5: "#D7CA68",
+    -4: "#C5CF64",
+    -3: "#A9CB62",
+    -2: "#88C368",
+    -1: "#66BA74",
+    0: "#4FB489",
+    1: "#47B09C",
+    2: "#48ADAE",
+    3: "#4DA7BE",
+    4: "#589DCA",
+    5: "#688FCE",
+    6: "#7B82CC",
+    7: "#8B78C7",
+    8: "#9A70C0",
+    9: "#A76AB7",
+    10: "#B565AB",
+    11: "#C26A9E",
+    12: "#CB758F",
+    13: "#D18182",
+    14: "#D58E7A",
+}
 
 
 def _latitude_to_radius_ratio(latitude: float) -> tuple[float, str]:
@@ -146,6 +178,97 @@ def _build_scene_labels() -> list[MapLabelResponse]:
             )
         )
     return labels
+
+
+def _format_time_zone_label(offset_minutes: int) -> str:
+    if offset_minutes == 0:
+        return "UTC"
+
+    sign = "+" if offset_minutes > 0 else "-"
+    absolute_minutes = abs(offset_minutes)
+    hours, minutes = divmod(absolute_minutes, 60)
+    if minutes == 0:
+        return f"UTC{sign}{hours}"
+    return f"UTC{sign}{hours}:{minutes:02d}"
+
+
+def _hex_to_rgb(hex_value: str) -> tuple[int, int, int]:
+    normalized = hex_value.replace("#", "")
+    return (
+        int(normalized[0:2], 16),
+        int(normalized[2:4], 16),
+        int(normalized[4:6], 16),
+    )
+
+
+def _rgb_to_hex(red: int, green: int, blue: int) -> str:
+    return "#{:02X}{:02X}{:02X}".format(red, green, blue)
+
+
+def _mix_hex_colors(left: str, right: str, fraction: float) -> str:
+    left_red, left_green, left_blue = _hex_to_rgb(left)
+    right_red, right_green, right_blue = _hex_to_rgb(right)
+    mixed_red = round(left_red + (right_red - left_red) * fraction)
+    mixed_green = round(left_green + (right_green - left_green) * fraction)
+    mixed_blue = round(left_blue + (right_blue - left_blue) * fraction)
+    return _rgb_to_hex(mixed_red, mixed_green, mixed_blue)
+
+
+def _darken_hex_color(hex_value: str, factor: float) -> str:
+    red, green, blue = _hex_to_rgb(hex_value)
+    return _rgb_to_hex(
+        round(red * factor),
+        round(green * factor),
+        round(blue * factor),
+    )
+
+
+def _time_zone_offset_minutes(time_zone_name: str) -> int | None:
+    try:
+        zone = ZoneInfo(time_zone_name)
+    except ZoneInfoNotFoundError:
+        return None
+
+    now_utc = datetime.now(timezone.utc)
+    offset = now_utc.astimezone(zone).utcoffset()
+    if offset is None:
+        return None
+    return int(offset.total_seconds() // 60)
+
+
+def _time_zone_fill_and_stroke(offset_minutes: int) -> tuple[str, str]:
+    raw_hours = max(-12.0, min(14.0, offset_minutes / 60))
+    lower_hour = max(-12, min(14, floor(raw_hours)))
+    upper_hour = max(-12, min(14, ceil(raw_hours)))
+    lower_color = TIME_ZONE_BASE_PALETTE[lower_hour]
+    upper_color = TIME_ZONE_BASE_PALETTE[upper_hour]
+    if lower_hour == upper_hour:
+      fill = lower_color
+    else:
+      fill = _mix_hex_colors(lower_color, upper_color, raw_hours - lower_hour)
+    stroke = _darken_hex_color(fill, 0.58)
+    return fill, stroke
+
+
+def _build_timezone_shape(shape: dict[str, object]) -> MapShapeResponse:
+    timezone_name = str(shape["name"])
+    offset_minutes = _time_zone_offset_minutes(timezone_name)
+    fill = str(shape["fill"])
+    stroke = str(shape["stroke"])
+    label: str | None = None
+    if offset_minutes is not None:
+        label = _format_time_zone_label(offset_minutes)
+        fill, stroke = _time_zone_fill_and_stroke(offset_minutes)
+
+    return MapShapeResponse(
+        name=timezone_name,
+        role=str(shape.get("role", "timezone")),
+        fill=fill,
+        stroke=stroke,
+        rings=_transform_rings(shape["rings"]),
+        time_zone_label=label,
+        time_zone_offset_minutes=offset_minutes,
+    )
 
 
 def _haversine_distance_km(
@@ -301,6 +424,9 @@ def _build_scene_cached(detail: str, include_state_boundaries: bool) -> MapScene
     raw_boundary_shapes, boundary_source, using_country_boundaries = (
         load_boundary_shapes(detail=detail)
     )
+    raw_timezone_shapes, timezone_source, using_real_timezones = (
+        load_timezone_boundary_shapes(detail=detail)
+    )
     if include_state_boundaries:
         raw_state_boundary_shapes, state_boundary_source, using_state_boundaries = (
             load_state_boundary_shapes(detail=detail)
@@ -355,11 +481,16 @@ def _build_scene_cached(detail: str, include_state_boundaries: bool) -> MapScene
         for shape in raw_state_boundary_shapes
         if shape.get("rings")
     ]
+    timezone_shapes = [
+        _build_timezone_shape(shape)
+        for shape in raw_timezone_shapes
+        if shape.get("rings")
+    ]
     labels = _build_scene_labels()
 
     return MapSceneResponse(
         markers=markers,
-        shapes=[*shapes, *boundary_shapes, *state_boundary_shapes],
+        shapes=[*shapes, *boundary_shapes, *state_boundary_shapes, *timezone_shapes],
         labels=labels,
         shape_source=shape_source,
         using_real_coastlines=using_real_coastlines,
@@ -367,6 +498,8 @@ def _build_scene_cached(detail: str, include_state_boundaries: bool) -> MapScene
         using_country_boundaries=using_country_boundaries,
         state_boundary_source=state_boundary_source,
         using_state_boundaries=using_state_boundaries,
+        timezone_source=timezone_source,
+        using_real_timezones=using_real_timezones,
         detail_level=detail,
     )
 

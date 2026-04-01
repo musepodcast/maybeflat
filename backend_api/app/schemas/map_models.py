@@ -34,6 +34,8 @@ class MapShapeResponse(BaseModel):
     fill: str
     stroke: str
     rings: list[VectorRingResponse]
+    time_zone_label: str | None = None
+    time_zone_offset_minutes: int | None = None
 
 
 class MapLabelResponse(BaseModel):
@@ -80,6 +82,8 @@ class MapSceneResponse(BaseModel):
     using_country_boundaries: bool
     state_boundary_source: str
     using_state_boundaries: bool
+    timezone_source: str
+    using_real_timezones: bool
     detail_level: str
 
 

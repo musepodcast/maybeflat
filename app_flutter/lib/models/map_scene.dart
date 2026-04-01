@@ -13,6 +13,8 @@ class MapScene {
     required this.usingCountryBoundaries,
     required this.stateBoundarySource,
     required this.usingStateBoundaries,
+    required this.timezoneSource,
+    required this.usingRealTimezones,
     required this.detailLevel,
   });
 
@@ -25,6 +27,8 @@ class MapScene {
   final bool usingCountryBoundaries;
   final String stateBoundarySource;
   final bool usingStateBoundaries;
+  final String timezoneSource;
+  final bool usingRealTimezones;
   final String detailLevel;
 
   factory MapScene.fromJson(Map<String, dynamic> json) {
@@ -46,6 +50,8 @@ class MapScene {
       stateBoundarySource:
           json['state_boundary_source'] as String? ?? 'unavailable',
       usingStateBoundaries: json['using_state_boundaries'] as bool? ?? false,
+      timezoneSource: json['timezone_source'] as String? ?? 'unavailable',
+      usingRealTimezones: json['using_real_timezones'] as bool? ?? false,
       detailLevel: json['detail_level'] as String? ?? 'desktop',
     );
   }

@@ -14,6 +14,8 @@ BOUNDARY_FILL = "#00000000"
 BOUNDARY_STROKE = "#204A60"
 STATE_BOUNDARY_FILL = "#00000000"
 STATE_BOUNDARY_STROKE = "#557C8B"
+TIMEZONE_FILL = "#00000000"
+TIMEZONE_STROKE = "#5B7381"
 DETAIL_POINT_LIMITS = {
     "mobile": 180,
     "desktop": 1400,
@@ -36,8 +38,20 @@ def get_state_boundary_dataset_path() -> Path:
     return repo_root / "docs" / "data" / "state_boundaries.geojson"
 
 
+def get_timezone_boundary_dataset_path() -> Path:
+    repo_root = Path(__file__).resolve().parents[3]
+    return repo_root / "docs" / "data" / "timezone_boundaries.geojson"
+
+
 def get_state_boundary_dataset_status() -> tuple[str, bool]:
     dataset_path = get_state_boundary_dataset_path()
+    if not dataset_path.exists():
+        return "unavailable", False
+    return dataset_path.name, True
+
+
+def get_timezone_boundary_dataset_status() -> tuple[str, bool]:
+    dataset_path = get_timezone_boundary_dataset_path()
     if not dataset_path.exists():
         return "unavailable", False
     return dataset_path.name, True
@@ -100,6 +114,29 @@ def load_state_boundary_shapes(detail: str = "desktop") -> tuple[list[dict[str, 
     return shapes, dataset_path.name, True
 
 
+def load_timezone_boundary_shapes(
+    detail: str = "desktop",
+) -> tuple[list[dict[str, Any]], str, bool]:
+    dataset_path = get_timezone_boundary_dataset_path()
+    if not dataset_path.exists():
+        return [], "unavailable", False
+
+    with dataset_path.open("r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+
+    shapes = _geojson_to_shapes(
+        raw,
+        detail=detail,
+        role="timezone",
+        default_fill=TIMEZONE_FILL,
+        default_stroke=TIMEZONE_STROKE,
+    )
+    if not shapes:
+        return [], dataset_path.name, False
+
+    return shapes, dataset_path.name, True
+
+
 def _geojson_to_shapes(
     payload: dict[str, Any],
     *,
@@ -150,7 +187,14 @@ def _geometry_to_shapes(
 ) -> list[dict[str, Any]]:
     geometry_type = geometry.get("type")
     coordinates = geometry.get("coordinates")
-    name = properties.get("name") or properties.get("NAME") or f"Coast {feature_index + 1}"
+    name = (
+        properties.get("tzid")
+        or properties.get("TZID")
+        or properties.get("zone")
+        or properties.get("name")
+        or properties.get("NAME")
+        or f"Coast {feature_index + 1}"
+    )
     fill = properties.get("fill") or default_fill
     stroke = properties.get("stroke") or default_stroke
 
