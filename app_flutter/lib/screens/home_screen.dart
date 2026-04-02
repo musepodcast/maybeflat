@@ -1454,7 +1454,7 @@ class _IntroPanel extends StatelessWidget {
                   isDense: true,
                 ),
                 items: const [
-                  const DropdownMenuItem(
+                  DropdownMenuItem(
                     value: _TimeZoneMode.approximate,
                     child: Text('Approximate'),
                   ),
