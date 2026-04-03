@@ -514,27 +514,6 @@ class _HomeScreenState extends State<HomeScreen> {
     };
   }
 
-  String _astronomyPlaybackPresetLabel(_AstronomyPlaybackPreset preset) {
-    return switch (preset) {
-      _AstronomyPlaybackPreset.oneDay => '1 day',
-      _AstronomyPlaybackPreset.sevenDays => '7 days',
-      _AstronomyPlaybackPreset.twentyEightDays => '28 days',
-      _AstronomyPlaybackPreset.threeSixtyFiveDays => '365 days',
-      _AstronomyPlaybackPreset.fiveYears => '5 years',
-      _AstronomyPlaybackPreset.tenYears => '10 years',
-      _AstronomyPlaybackPreset.custom => 'Custom',
-    };
-  }
-
-  String _astronomyPlaybackSpeedLabel(_AstronomyPlaybackSpeed speed) {
-    return switch (speed) {
-      _AstronomyPlaybackSpeed.slow => 'Slow',
-      _AstronomyPlaybackSpeed.normal => 'Normal',
-      _AstronomyPlaybackSpeed.fast => 'Fast',
-      _AstronomyPlaybackSpeed.veryFast => 'Very fast',
-    };
-  }
-
   Duration _astronomyPlaybackTimeStep(_AstronomyPlaybackSpeed speed) {
     return switch (speed) {
       _AstronomyPlaybackSpeed.slow => const Duration(minutes: 5),
