@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -564,12 +565,13 @@ class FlatWorldCanvas extends StatefulWidget {
 }
 
 class _FlatWorldCanvasState extends State<FlatWorldCanvas>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const double _minScale = 1;
   static const double _maxScale = 24;
   final TransformationController _transformationController =
       TransformationController();
   late final AnimationController _astronomyAnimationController;
+  late final AnimationController _astronomyTransitionController;
   Timer? _interactionEndTimer;
   double _rotationRadians = 0;
   double _labelScale = 1;
@@ -580,6 +582,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   Size? _cachedSceneSize;
   _ProjectedSceneCache? _projectedSceneCache;
   _OverlayAnchorCache? _overlayAnchorCache;
+  AstronomySnapshot? _previousAstronomySnapshot;
 
   @override
   void initState() {
@@ -588,6 +591,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       vsync: this,
       duration: const Duration(seconds: 6),
     )..repeat();
+    _astronomyTransitionController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      value: 1,
+    );
     _transformationController.addListener(_handleTransformChanged);
   }
 
@@ -597,6 +605,15 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     if (!identical(oldWidget.shapes, widget.shapes)) {
       _cachedSceneSize = null;
       _overlayAnchorCache = null;
+    }
+    if (oldWidget.astronomySnapshot != widget.astronomySnapshot &&
+        oldWidget.astronomySnapshot != null &&
+        widget.astronomySnapshot != null) {
+      _previousAstronomySnapshot = oldWidget.astronomySnapshot;
+      _astronomyTransitionController.forward(from: 0);
+    } else if (widget.astronomySnapshot == null) {
+      _previousAstronomySnapshot = null;
+      _astronomyTransitionController.value = 1;
     }
   }
 
@@ -734,8 +751,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                   ),
                                 RepaintBoundary(
                                   child: CustomPaint(
-                                    painter: _FlatWorldPainter(
-                                      repaint: _astronomyAnimationController,
+                                      painter: _FlatWorldPainter(
+                                      repaint: Listenable.merge([
+                                        _astronomyAnimationController,
+                                        _astronomyTransitionController,
+                                      ]),
                                       projectedScene: projectedScene,
                                       markerAnchorPoints: overlayAnchors.markerPoints,
                                       labelAnchorPoints: overlayAnchors.labelPoints,
@@ -750,7 +770,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                       showShapeLabels: widget.showShapeLabels,
                                       showStateBoundaries:
                                           widget.showStateBoundaries,
+                                      previousAstronomySnapshot:
+                                          _previousAstronomySnapshot,
                                       astronomySnapshot: widget.astronomySnapshot,
+                                      astronomyTransitionValue:
+                                          _astronomyTransitionController.value,
                                       showSunPath: widget.showSunPath,
                                       showMoonPath: widget.showMoonPath,
                                       astronomyObserverName:
@@ -1335,6 +1359,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   void dispose() {
     _interactionEndTimer?.cancel();
     _astronomyAnimationController.dispose();
+    _astronomyTransitionController.dispose();
     _transformationController.removeListener(_handleTransformChanged);
     _transformationController.dispose();
     super.dispose();
@@ -1744,7 +1769,9 @@ class _FlatWorldPainter extends CustomPainter {
     required this.showLabels,
     required this.showShapeLabels,
     required this.showStateBoundaries,
+    required this.previousAstronomySnapshot,
     required this.astronomySnapshot,
+    required this.astronomyTransitionValue,
     required this.showSunPath,
     required this.showMoonPath,
     required this.astronomyObserverName,
@@ -1769,7 +1796,9 @@ class _FlatWorldPainter extends CustomPainter {
   final bool showLabels;
   final bool showShapeLabels;
   final bool showStateBoundaries;
+  final AstronomySnapshot? previousAstronomySnapshot;
   final AstronomySnapshot? astronomySnapshot;
+  final double astronomyTransitionValue;
   final bool showSunPath;
   final bool showMoonPath;
   final String? astronomyObserverName;
@@ -2245,12 +2274,76 @@ class _FlatWorldPainter extends CustomPainter {
             math.cos(deltaLongitude);
   }
 
+  AstronomySnapshot? _resolvedAstronomySnapshot() {
+    final current = astronomySnapshot;
+    final previous = previousAstronomySnapshot;
+    final t = astronomyTransitionValue.clamp(0.0, 1.0);
+    if (current == null || previous == null || t >= 1) {
+      return current;
+    }
+    return AstronomySnapshot(
+      timestampUtc: current.timestampUtc,
+      source: current.source,
+      sun: AstronomyBody(
+        name: current.sun.name,
+        subpoint: _lerpPlaceMarker(previous.sun.subpoint, current.sun.subpoint, t),
+        path: current.sun.path,
+        phaseName: current.sun.phaseName,
+        illuminationFraction: current.sun.illuminationFraction,
+      ),
+      moon: AstronomyBody(
+        name: current.moon.name,
+        subpoint:
+            _lerpPlaceMarker(previous.moon.subpoint, current.moon.subpoint, t),
+        path: current.moon.path,
+        phaseName: current.moon.phaseName,
+        illuminationFraction: previous.moon.illuminationFraction == null ||
+                current.moon.illuminationFraction == null
+            ? current.moon.illuminationFraction
+            : ui.lerpDouble(
+                previous.moon.illuminationFraction!,
+                current.moon.illuminationFraction!,
+                t,
+              ),
+      ),
+      observer: current.observer,
+    );
+  }
+
+  PlaceMarker _lerpPlaceMarker(PlaceMarker start, PlaceMarker end, double t) {
+    return PlaceMarker(
+      name: end.name,
+      latitude: ui.lerpDouble(start.latitude, end.latitude, t) ?? end.latitude,
+      longitude: _lerpLongitude(start.longitude, end.longitude, t),
+      x: ui.lerpDouble(start.x, end.x, t) ?? end.x,
+      y: ui.lerpDouble(start.y, end.y, t) ?? end.y,
+      zone: end.zone,
+    );
+  }
+
+  double _lerpLongitude(double start, double end, double t) {
+    var delta = end - start;
+    if (delta > 180) {
+      delta -= 360;
+    } else if (delta < -180) {
+      delta += 360;
+    }
+    final lerped = start + delta * t;
+    if (lerped > 180) {
+      return lerped - 360;
+    }
+    if (lerped < -180) {
+      return lerped + 360;
+    }
+    return lerped;
+  }
+
   void _paintAstronomyOverlay(
     Canvas canvas,
     Offset center,
     double mapRadius,
   ) {
-    final snapshot = astronomySnapshot;
+    final snapshot = _resolvedAstronomySnapshot();
     if (snapshot == null) {
       return;
     }
@@ -2762,7 +2855,9 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.showLabels != showLabels ||
         oldDelegate.showShapeLabels != showShapeLabels ||
         oldDelegate.showStateBoundaries != showStateBoundaries ||
+        oldDelegate.previousAstronomySnapshot != previousAstronomySnapshot ||
         oldDelegate.astronomySnapshot != astronomySnapshot ||
+        oldDelegate.astronomyTransitionValue != astronomyTransitionValue ||
         oldDelegate.showSunPath != showSunPath ||
         oldDelegate.showMoonPath != showMoonPath ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||

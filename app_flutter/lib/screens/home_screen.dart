@@ -18,6 +18,16 @@ enum _DistanceUnitDisplay { both, kilometers, miles }
 enum _OuterEdgeMode { coastline, country, both }
 enum _AstronomyTimeMode { current, custom }
 enum _AstronomyEventFilter { all, solar, lunar }
+enum _AstronomyPlaybackPreset {
+  oneDay,
+  sevenDays,
+  twentyEightDays,
+  threeSixtyFiveDays,
+  fiveYears,
+  tenYears,
+  custom,
+}
+enum _AstronomyPlaybackSpeed { slow, normal, fast, veryFast }
 enum _TimeZoneMode { approximate, real }
 
 const int _minRouteStops = 2;
@@ -25,6 +35,7 @@ const int _maxRouteStops = 6;
 const List<int> _gridStepOptions = [5, 10, 15, 20, 30, 45, 60];
 const int _healthFailureThreshold = 3;
 const double _stateBoundaryZoomThreshold = 3.6;
+const Duration _astronomyPlaybackTick = Duration(milliseconds: 200);
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -47,12 +58,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Timer? _healthTimer;
   Timer? _astronomyTimer;
+  Timer? _astronomyPlaybackTimer;
   int _consecutiveHealthFailures = 0;
   bool _isSyncing = false;
   bool _isMapInteracting = false;
   bool _isMeasuring = false;
   bool _isLoadingAstronomy = false;
   bool _isLoadingAstronomyEvents = false;
+  bool _isAstronomyPlaying = false;
   bool _showAstronomyEventPicker = false;
   double _mapViewScale = 1.0;
   bool _showGrid = true;
@@ -95,6 +108,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _selectedAstronomyEventId;
   CityCatalogEntry? _astronomyObserver;
   DateTime _astronomyCustomTime = DateTime.now();
+  DateTime _astronomyPlaybackStart = DateTime.now();
+  DateTime _astronomyPlaybackEnd = DateTime.now().add(const Duration(days: 1));
+  double _astronomyPlaybackProgress = 0;
+  _AstronomyPlaybackPreset _astronomyPlaybackPreset =
+      _AstronomyPlaybackPreset.oneDay;
+  _AstronomyPlaybackSpeed _astronomyPlaybackSpeed =
+      _AstronomyPlaybackSpeed.normal;
   List<PlaceMarker?> _routePoints = List<PlaceMarker?>.filled(
     _maxRouteStops,
     null,
@@ -121,6 +141,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _healthTimer?.cancel();
     _astronomyTimer?.cancel();
+    _astronomyPlaybackTimer?.cancel();
     _astronomyObserverController.dispose();
     _astronomyEventScrollController.dispose();
     for (final controller in _routeControllers) {
@@ -468,6 +489,61 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool get _shouldShowAstronomy => _showSunPath || _showMoonPath;
 
+  DateTime _astronomyPlaybackCurrentTime() {
+    final startUtc = _astronomyPlaybackStart.toUtc();
+    final endUtc = _astronomyPlaybackEnd.toUtc();
+    final totalMilliseconds = endUtc
+        .difference(startUtc)
+        .inMilliseconds
+        .clamp(1, 1 << 30);
+    final currentMilliseconds =
+        (totalMilliseconds * _astronomyPlaybackProgress).round();
+    return startUtc.add(Duration(milliseconds: currentMilliseconds)).toLocal();
+  }
+
+  Duration _astronomyPlaybackPresetDuration(_AstronomyPlaybackPreset preset) {
+    return switch (preset) {
+      _AstronomyPlaybackPreset.oneDay => const Duration(days: 1),
+      _AstronomyPlaybackPreset.sevenDays => const Duration(days: 7),
+      _AstronomyPlaybackPreset.twentyEightDays => const Duration(days: 28),
+      _AstronomyPlaybackPreset.threeSixtyFiveDays => const Duration(days: 365),
+      _AstronomyPlaybackPreset.fiveYears => const Duration(days: 365 * 5),
+      _AstronomyPlaybackPreset.tenYears => const Duration(days: 365 * 10),
+      _AstronomyPlaybackPreset.custom =>
+        _astronomyPlaybackEnd.difference(_astronomyPlaybackStart),
+    };
+  }
+
+  String _astronomyPlaybackPresetLabel(_AstronomyPlaybackPreset preset) {
+    return switch (preset) {
+      _AstronomyPlaybackPreset.oneDay => '1 day',
+      _AstronomyPlaybackPreset.sevenDays => '7 days',
+      _AstronomyPlaybackPreset.twentyEightDays => '28 days',
+      _AstronomyPlaybackPreset.threeSixtyFiveDays => '365 days',
+      _AstronomyPlaybackPreset.fiveYears => '5 years',
+      _AstronomyPlaybackPreset.tenYears => '10 years',
+      _AstronomyPlaybackPreset.custom => 'Custom',
+    };
+  }
+
+  String _astronomyPlaybackSpeedLabel(_AstronomyPlaybackSpeed speed) {
+    return switch (speed) {
+      _AstronomyPlaybackSpeed.slow => 'Slow',
+      _AstronomyPlaybackSpeed.normal => 'Normal',
+      _AstronomyPlaybackSpeed.fast => 'Fast',
+      _AstronomyPlaybackSpeed.veryFast => 'Very fast',
+    };
+  }
+
+  Duration _astronomyPlaybackTimeStep(_AstronomyPlaybackSpeed speed) {
+    return switch (speed) {
+      _AstronomyPlaybackSpeed.slow => const Duration(minutes: 5),
+      _AstronomyPlaybackSpeed.normal => const Duration(minutes: 15),
+      _AstronomyPlaybackSpeed.fast => const Duration(hours: 1),
+      _AstronomyPlaybackSpeed.veryFast => const Duration(hours: 6),
+    };
+  }
+
   DateTime _astronomyTimestampUtc() {
     return switch (_astronomyTimeMode) {
       _AstronomyTimeMode.current => DateTime.now().toUtc(),
@@ -483,6 +559,198 @@ class _HomeScreenState extends State<HomeScreen> {
     _astronomyTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _loadAstronomy(),
+    );
+  }
+
+  void _stopAstronomyPlayback({bool resetProgress = false}) {
+    _astronomyPlaybackTimer?.cancel();
+    _astronomyPlaybackTimer = null;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isAstronomyPlaying = false;
+      if (resetProgress) {
+        _astronomyPlaybackProgress = 0;
+        _astronomyCustomTime = _astronomyPlaybackStart;
+      }
+    });
+  }
+
+  void _syncAstronomyPlaybackTime() {
+    final start = _astronomyPlaybackStart;
+    final end = _astronomyPlaybackEnd.isAfter(start)
+        ? _astronomyPlaybackEnd
+        : start.add(const Duration(minutes: 1));
+    if (end != _astronomyPlaybackEnd) {
+      _astronomyPlaybackEnd = end;
+    }
+    final current = _astronomyCustomTime;
+    final totalMilliseconds = end
+        .difference(start)
+        .inMilliseconds
+        .clamp(1, 1 << 30);
+    final elapsedMilliseconds = current
+        .difference(start)
+        .inMilliseconds
+        .clamp(0, totalMilliseconds);
+    _astronomyPlaybackProgress =
+        elapsedMilliseconds / totalMilliseconds;
+  }
+
+  void _applyAstronomyPlaybackPreset(_AstronomyPlaybackPreset? preset) {
+    if (preset == null) {
+      return;
+    }
+    final baseTime = _astronomyTimeMode == _AstronomyTimeMode.custom
+        ? _astronomyCustomTime
+        : DateTime.now();
+    final duration = _astronomyPlaybackPresetDuration(preset);
+    setState(() {
+      _astronomyPlaybackPreset = preset;
+      if (preset != _AstronomyPlaybackPreset.custom) {
+        _astronomyPlaybackStart = baseTime;
+        _astronomyPlaybackEnd = baseTime.add(duration);
+        _astronomyPlaybackProgress = 0;
+        _astronomyTimeMode = _AstronomyTimeMode.custom;
+        _astronomyCustomTime = _astronomyPlaybackStart;
+      }
+    });
+    _stopAstronomyPlayback();
+    _syncAstronomyTimer();
+    if (_shouldShowAstronomy) {
+      _loadAstronomy();
+    }
+  }
+
+  void _setAstronomyPlaybackSpeed(_AstronomyPlaybackSpeed? speed) {
+    if (speed == null) {
+      return;
+    }
+    setState(() {
+      _astronomyPlaybackSpeed = speed;
+    });
+  }
+
+  Future<void> _pickAstronomyPlaybackDateTime({
+    required BuildContext context,
+    required bool isStart,
+  }) async {
+    final initial = isStart ? _astronomyPlaybackStart : _astronomyPlaybackEnd;
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2200),
+    );
+    if (pickedDate == null || !context.mounted) {
+      return;
+    }
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (pickedTime == null || !context.mounted) {
+      return;
+    }
+    final nextValue = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+    setState(() {
+      _astronomyPlaybackPreset = _AstronomyPlaybackPreset.custom;
+      if (isStart) {
+        _astronomyPlaybackStart = nextValue;
+        if (!_astronomyPlaybackEnd.isAfter(_astronomyPlaybackStart)) {
+          _astronomyPlaybackEnd =
+              _astronomyPlaybackStart.add(const Duration(minutes: 1));
+        }
+      } else {
+        _astronomyPlaybackEnd = nextValue.isAfter(_astronomyPlaybackStart)
+            ? nextValue
+            : _astronomyPlaybackStart.add(const Duration(minutes: 1));
+      }
+      _astronomyTimeMode = _AstronomyTimeMode.custom;
+      _syncAstronomyPlaybackTime();
+      _astronomyCustomTime = _astronomyPlaybackCurrentTime();
+    });
+    _stopAstronomyPlayback();
+    _syncAstronomyTimer();
+    if (_shouldShowAstronomy) {
+      await _loadAstronomy();
+    }
+  }
+
+  Future<void> _setAstronomyPlaybackProgress(double progress) async {
+    final clampedProgress = progress.clamp(0.0, 1.0);
+    setState(() {
+      _astronomyTimeMode = _AstronomyTimeMode.custom;
+      _astronomyPlaybackProgress = clampedProgress;
+      _astronomyCustomTime = _astronomyPlaybackCurrentTime();
+    });
+    _syncAstronomyTimer();
+    if (_shouldShowAstronomy) {
+      await _loadAstronomy();
+    }
+  }
+
+  void _toggleAstronomyPlayback() {
+    if (_isAstronomyPlaying) {
+      _stopAstronomyPlayback();
+      return;
+    }
+    if (_backendStatus == _BackendStatus.offline || !_shouldShowAstronomy) {
+      setState(() {
+        _astronomyError =
+            'Enable the sun or moon overlay and keep the backend online to use playback.';
+      });
+      return;
+    }
+    setState(() {
+      _astronomyTimeMode = _AstronomyTimeMode.custom;
+      if (_astronomyPlaybackProgress >= 1) {
+        _astronomyPlaybackProgress = 0;
+      }
+      _astronomyCustomTime = _astronomyPlaybackCurrentTime();
+      _isAstronomyPlaying = true;
+    });
+    _syncAstronomyTimer();
+    _astronomyPlaybackTimer?.cancel();
+    _astronomyPlaybackTimer = Timer.periodic(
+      _astronomyPlaybackTick,
+      (_) async {
+        if (!mounted || _isLoadingAstronomy) {
+          return;
+        }
+        final totalDuration = _astronomyPlaybackEnd.difference(
+          _astronomyPlaybackStart,
+        );
+        final safeTotalDuration = totalDuration.inMilliseconds <= 0
+            ? const Duration(minutes: 1)
+            : totalDuration;
+        final nextTime = _astronomyCustomTime.add(
+          _astronomyPlaybackTimeStep(_astronomyPlaybackSpeed),
+        );
+        final clampedNextTime = nextTime.isAfter(_astronomyPlaybackEnd)
+            ? _astronomyPlaybackEnd
+            : nextTime;
+        final elapsed = clampedNextTime
+            .difference(_astronomyPlaybackStart)
+            .inMilliseconds
+            .clamp(0, safeTotalDuration.inMilliseconds);
+        final nextProgress = elapsed / safeTotalDuration.inMilliseconds;
+        setState(() {
+          _astronomyPlaybackProgress = nextProgress;
+          _astronomyCustomTime = clampedNextTime;
+        });
+        await _loadAstronomy(quiet: true);
+        if (!mounted || _astronomyPlaybackProgress >= 1) {
+          _stopAstronomyPlayback();
+        }
+      },
     );
   }
 
@@ -537,7 +805,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadAstronomy() async {
+  Future<void> _loadAstronomy({bool quiet = false}) async {
     if (!_shouldShowAstronomy) {
       if (!mounted) {
         return;
@@ -559,7 +827,9 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    if (mounted) {
+    if (quiet) {
+      _isLoadingAstronomy = true;
+    } else if (mounted) {
       setState(() {
         _isLoadingAstronomy = true;
         _astronomyError = null;
@@ -579,7 +849,9 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _astronomySnapshot = snapshot;
-        _astronomyError = null;
+        if (!quiet) {
+          _astronomyError = null;
+        }
       });
     } catch (_) {
       if (!mounted) {
@@ -589,8 +861,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _astronomyError =
             'Could not load the live astronomy overlay from the backend.';
       });
+      if (_isAstronomyPlaying) {
+        _stopAstronomyPlayback();
+      }
     } finally {
-      if (mounted) {
+      if (quiet) {
+        _isLoadingAstronomy = false;
+      } else if (mounted) {
         setState(() {
           _isLoadingAstronomy = false;
         });
@@ -614,6 +891,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _astronomyError = null;
       }
     });
+    if (!_shouldShowAstronomy) {
+      _stopAstronomyPlayback();
+    }
     _syncAstronomyTimer();
     if (_shouldShowAstronomy) {
       _loadAstronomy();
@@ -623,7 +903,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void _setAstronomyTimeMode(_AstronomyTimeMode mode) {
     setState(() {
       _astronomyTimeMode = mode;
+      if (mode == _AstronomyTimeMode.custom) {
+        _syncAstronomyPlaybackTime();
+        _astronomyCustomTime = _astronomyPlaybackCurrentTime();
+      }
     });
+    if (mode == _AstronomyTimeMode.current) {
+      _stopAstronomyPlayback();
+    }
     _syncAstronomyTimer();
     if (_shouldShowAstronomy) {
       _loadAstronomy();
@@ -636,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       initialDate: initialDate,
       firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      lastDate: DateTime(2200),
     );
     if (pickedDate == null || !context.mounted) {
       return;
@@ -658,8 +945,10 @@ class _HomeScreenState extends State<HomeScreen> {
         pickedTime.hour,
         pickedTime.minute,
       );
+      _syncAstronomyPlaybackTime();
     });
 
+    _stopAstronomyPlayback();
     if (_shouldShowAstronomy) {
       _loadAstronomy();
     }
@@ -770,7 +1059,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSunPath = true;
       _showMoonPath = true;
       _showAstronomyEventPicker = false;
+      _syncAstronomyPlaybackTime();
     });
+    _stopAstronomyPlayback();
     _syncAstronomyTimer();
     await _loadAstronomy();
   }
@@ -1040,6 +1331,19 @@ class _HomeScreenState extends State<HomeScreen> {
           astronomyCustomTimeLabel: _formatAstronomyTimeLabel(
             _astronomyCustomTime.toUtc(),
           ),
+          astronomyPlaybackStartLabel: _formatAstronomyTimeLabel(
+            _astronomyPlaybackStart.toUtc(),
+          ),
+          astronomyPlaybackEndLabel: _formatAstronomyTimeLabel(
+            _astronomyPlaybackEnd.toUtc(),
+          ),
+          astronomyPlaybackCurrentLabel: _formatAstronomyTimeLabel(
+            _astronomyCustomTime.toUtc(),
+          ),
+          astronomyPlaybackProgress: _astronomyPlaybackProgress,
+          astronomyPlaybackPreset: _astronomyPlaybackPreset,
+          astronomyPlaybackSpeed: _astronomyPlaybackSpeed,
+          isAstronomyPlaying: _isAstronomyPlaying,
           isLoadingAstronomyEvents: _isLoadingAstronomyEvents,
           astronomyEventError: _astronomyEventError,
           markerCount: _markers.length,
@@ -1100,6 +1404,21 @@ class _HomeScreenState extends State<HomeScreen> {
           onAstronomyDateTimePressed: () => _pickAstronomyDateTime(context),
           onAstronomyObserverSelected: _setAstronomyObserver,
           onClearAstronomyObserver: () => _setAstronomyObserver(null),
+          onAstronomyPlaybackPresetChanged: _applyAstronomyPlaybackPreset,
+          onAstronomyPlaybackSpeedChanged: _setAstronomyPlaybackSpeed,
+          onAstronomyPlaybackStartPressed: () => _pickAstronomyPlaybackDateTime(
+            context: context,
+            isStart: true,
+          ),
+          onAstronomyPlaybackEndPressed: () => _pickAstronomyPlaybackDateTime(
+            context: context,
+            isStart: false,
+          ),
+          onAstronomyPlaybackProgressChanged: (value) {
+            _setAstronomyPlaybackProgress(value);
+          },
+          onAstronomyPlaybackToggle: _toggleAstronomyPlayback,
+          onAstronomyPlaybackStop: () => _stopAstronomyPlayback(),
           onAstronomyEventFilterChanged: _setAstronomyEventFilter,
           onAstronomyEclipseSubtypeChanged: _setAstronomyEclipseSubtype,
           onAstronomyEventSelected: (event) {
@@ -1270,6 +1589,13 @@ class _IntroPanel extends StatelessWidget {
     required this.astronomyEventScrollController,
     required this.astronomyObserverName,
     required this.astronomyCustomTimeLabel,
+    required this.astronomyPlaybackStartLabel,
+    required this.astronomyPlaybackEndLabel,
+    required this.astronomyPlaybackCurrentLabel,
+    required this.astronomyPlaybackProgress,
+    required this.astronomyPlaybackPreset,
+    required this.astronomyPlaybackSpeed,
+    required this.isAstronomyPlaying,
     required this.isLoadingAstronomyEvents,
     required this.astronomyEventError,
     required this.markerCount,
@@ -1294,6 +1620,13 @@ class _IntroPanel extends StatelessWidget {
     required this.onAstronomyDateTimePressed,
     required this.onAstronomyObserverSelected,
     required this.onClearAstronomyObserver,
+    required this.onAstronomyPlaybackPresetChanged,
+    required this.onAstronomyPlaybackSpeedChanged,
+    required this.onAstronomyPlaybackStartPressed,
+    required this.onAstronomyPlaybackEndPressed,
+    required this.onAstronomyPlaybackProgressChanged,
+    required this.onAstronomyPlaybackToggle,
+    required this.onAstronomyPlaybackStop,
     required this.onAstronomyEventFilterChanged,
     required this.onAstronomyEclipseSubtypeChanged,
     required this.onAstronomyEventSelected,
@@ -1346,6 +1679,13 @@ class _IntroPanel extends StatelessWidget {
   final ScrollController astronomyEventScrollController;
   final String? astronomyObserverName;
   final String astronomyCustomTimeLabel;
+  final String astronomyPlaybackStartLabel;
+  final String astronomyPlaybackEndLabel;
+  final String astronomyPlaybackCurrentLabel;
+  final double astronomyPlaybackProgress;
+  final _AstronomyPlaybackPreset astronomyPlaybackPreset;
+  final _AstronomyPlaybackSpeed astronomyPlaybackSpeed;
+  final bool isAstronomyPlaying;
   final bool isLoadingAstronomyEvents;
   final String? astronomyEventError;
   final int markerCount;
@@ -1370,6 +1710,13 @@ class _IntroPanel extends StatelessWidget {
   final VoidCallback onAstronomyDateTimePressed;
   final ValueChanged<CityCatalogEntry?> onAstronomyObserverSelected;
   final VoidCallback onClearAstronomyObserver;
+  final ValueChanged<_AstronomyPlaybackPreset?> onAstronomyPlaybackPresetChanged;
+  final ValueChanged<_AstronomyPlaybackSpeed?> onAstronomyPlaybackSpeedChanged;
+  final VoidCallback onAstronomyPlaybackStartPressed;
+  final VoidCallback onAstronomyPlaybackEndPressed;
+  final ValueChanged<double> onAstronomyPlaybackProgressChanged;
+  final VoidCallback onAstronomyPlaybackToggle;
+  final VoidCallback onAstronomyPlaybackStop;
   final ValueChanged<_AstronomyEventFilter?> onAstronomyEventFilterChanged;
   final ValueChanged<String?> onAstronomyEclipseSubtypeChanged;
   final ValueChanged<AstronomyEvent?> onAstronomyEventSelected;
@@ -1446,20 +1793,18 @@ class _IntroPanel extends StatelessWidget {
                 ),
                 onChanged: onShowTimeZonesChanged,
               ),
-              DropdownButtonFormField<_TimeZoneMode>(
-                initialValue: _TimeZoneMode.approximate,
-                decoration: const InputDecoration(
-                  labelText: 'Time-zone mode',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(
+              _SelectionField(
+                labelText: 'Time-zone mode',
+                valueText: 'Approximate',
+                enabled: showTimeZones,
+                currentValue: _TimeZoneMode.approximate,
+                onChanged: onTimeZoneModeChanged,
+                options: const [
+                  _ChoiceItem(
                     value: _TimeZoneMode.approximate,
-                    child: Text('Approximate'),
+                    label: 'Approximate',
                   ),
                 ],
-                onChanged: showTimeZones ? onTimeZoneModeChanged : null,
               ),
               const SizedBox(height: 8),
               const Text(
@@ -1471,46 +1816,39 @@ class _IntroPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: gridStepDegrees,
-                decoration: const InputDecoration(
-                  labelText: 'Grid interval',
-                  helperText: 'Multiples of 5 degrees',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: [
+              _SelectionField(
+                labelText: 'Grid interval',
+                valueText: '$gridStepDegrees degrees',
+                helperText: 'Multiples of 5 degrees',
+                enabled: showGrid,
+                currentValue: gridStepDegrees,
+                onChanged: onGridStepChanged,
+                options: [
                   for (final step in _gridStepOptions)
-                    DropdownMenuItem(
-                      value: step,
-                      child: Text('$step degrees'),
-                    ),
+                    _ChoiceItem(value: step, label: '$step degrees'),
                 ],
-                onChanged: showGrid ? onGridStepChanged : null,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<_OuterEdgeMode>(
-                initialValue: outerEdgeMode,
-                decoration: const InputDecoration(
-                  labelText: 'Outer edge source',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: _OuterEdgeMode.coastline,
-                    child: Text('Coastline'),
-                  ),
-                  DropdownMenuItem(
-                    value: _OuterEdgeMode.country,
-                    child: Text('Country'),
-                  ),
-                  DropdownMenuItem(
-                    value: _OuterEdgeMode.both,
-                    child: Text('Both'),
-                  ),
-                ],
+              _SelectionField(
+                labelText: 'Outer edge source',
+                valueText: switch (outerEdgeMode) {
+                  _OuterEdgeMode.coastline => 'Coastline',
+                  _OuterEdgeMode.country => 'Country',
+                  _OuterEdgeMode.both => 'Both',
+                },
+                currentValue: outerEdgeMode,
                 onChanged: onOuterEdgeModeChanged,
+                options: const [
+                  _ChoiceItem(
+                    value: _OuterEdgeMode.coastline,
+                    label: 'Coastline',
+                  ),
+                  _ChoiceItem(
+                    value: _OuterEdgeMode.country,
+                    label: 'Country',
+                  ),
+                  _ChoiceItem(value: _OuterEdgeMode.both, label: 'Both'),
+                ],
               ),
               const SizedBox(height: 12),
               SwitchListTile(
@@ -1555,24 +1893,23 @@ class _IntroPanel extends StatelessWidget {
                 title: const Text('Moon path'),
                 onChanged: onShowMoonPathChanged,
               ),
-              DropdownButtonFormField<_AstronomyTimeMode>(
-                initialValue: astronomyTimeMode,
-                decoration: const InputDecoration(
-                  labelText: 'Astronomy time',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(
+              _SelectionField(
+                labelText: 'Astronomy time',
+                valueText: astronomyTimeMode == _AstronomyTimeMode.current
+                    ? 'Current time'
+                    : 'Custom time',
+                currentValue: astronomyTimeMode,
+                onChanged: onAstronomyTimeModeChanged,
+                options: const [
+                  _ChoiceItem(
                     value: _AstronomyTimeMode.current,
-                    child: Text('Current time'),
+                    label: 'Current time',
                   ),
-                  DropdownMenuItem(
+                  _ChoiceItem(
                     value: _AstronomyTimeMode.custom,
-                    child: Text('Custom time'),
+                    label: 'Custom time',
                   ),
                 ],
-                onChanged: onAstronomyTimeModeChanged,
               ),
               const SizedBox(height: 10),
               OutlinedButton(
@@ -1586,10 +1923,13 @@ class _IntroPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              _CitySearchField(
-                label: 'Observer city',
-                controller: astronomyObserverController,
-                onSelected: onAstronomyObserverSelected,
+              _CitySelectionField(
+                labelText: 'Observer city',
+                valueText: astronomyObserverName ?? 'Select observer city',
+                currentValue: astronomyObserverName == null
+                    ? null
+                    : _findCityCatalogEntryByName(astronomyObserverName!),
+                onChanged: onAstronomyObserverSelected,
               ),
               const SizedBox(height: 8),
               Row(
@@ -1612,6 +1952,107 @@ class _IntroPanel extends StatelessWidget {
                         ? null
                         : onClearAstronomyObserver,
                     child: const Text('Clear'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Sun/Moon playback',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF112A46),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SelectionField(
+                labelText: 'Range',
+                valueText: _formatPlaybackPresetLabel(astronomyPlaybackPreset),
+                currentValue: astronomyPlaybackPreset,
+                onChanged: onAstronomyPlaybackPresetChanged,
+                options: [
+                  for (final preset in _AstronomyPlaybackPreset.values)
+                    _ChoiceItem(
+                      value: preset,
+                      label: _formatPlaybackPresetLabel(preset),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _SelectionField(
+                labelText: 'Playback speed',
+                valueText: _formatPlaybackSpeedLabel(astronomyPlaybackSpeed),
+                currentValue: astronomyPlaybackSpeed,
+                onChanged: onAstronomyPlaybackSpeedChanged,
+                options: [
+                  for (final speed in _AstronomyPlaybackSpeed.values)
+                    _ChoiceItem(
+                      value: speed,
+                      label: _formatPlaybackSpeedLabel(speed),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onAstronomyPlaybackStartPressed,
+                      child: Text('Start: $astronomyPlaybackStartLabel'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onAstronomyPlaybackEndPressed,
+                      child: Text('End: $astronomyPlaybackEndLabel'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Scrub time: $astronomyPlaybackCurrentLabel',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF335C67),
+                      height: 1.35,
+                    ),
+                  ),
+                  Slider(
+                    value: astronomyPlaybackProgress,
+                    onChanged: onAstronomyPlaybackProgressChanged,
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF112A46),
+                        foregroundColor: const Color(0xFFF8F3E8),
+                      ),
+                      onPressed: onAstronomyPlaybackToggle,
+                      child: Text(isAstronomyPlaying ? 'Pause' : 'Play'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: isAstronomyPlaying ||
+                              astronomyPlaybackProgress > 0
+                          ? onAstronomyPlaybackStop
+                          : null,
+                      child: const Text('Stop'),
+                    ),
                   ),
                 ],
               ),
@@ -1707,64 +2148,43 @@ class _IntroPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<_AstronomyEventFilter>(
-                initialValue: astronomyEventFilter,
-                decoration: InputDecoration(
-                  labelText: 'Event Filter',
-                  border: const OutlineInputBorder(),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFFBFCBD5)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFF112A46), width: 1.4),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(
+              _SelectionField(
+                labelText: 'Event Filter',
+                valueText: switch (astronomyEventFilter) {
+                  _AstronomyEventFilter.all => 'All eclipses',
+                  _AstronomyEventFilter.solar => 'Solar eclipses',
+                  _AstronomyEventFilter.lunar => 'Lunar eclipses',
+                },
+                currentValue: astronomyEventFilter,
+                onChanged: onAstronomyEventFilterChanged,
+                options: const [
+                  _ChoiceItem(
                     value: _AstronomyEventFilter.all,
-                    child: Text('All eclipses'),
+                    label: 'All eclipses',
                   ),
-                  DropdownMenuItem(
+                  _ChoiceItem(
                     value: _AstronomyEventFilter.solar,
-                    child: Text('Solar eclipses'),
+                    label: 'Solar eclipses',
                   ),
-                  DropdownMenuItem(
+                  _ChoiceItem(
                     value: _AstronomyEventFilter.lunar,
-                    child: Text('Lunar eclipses'),
+                    label: 'Lunar eclipses',
                   ),
                 ],
-                onChanged: onAstronomyEventFilterChanged,
               ),
               const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: astronomyEclipseSubtype,
-                decoration: InputDecoration(
-                  labelText: 'Eclipse Type',
-                  border: const OutlineInputBorder(),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFFBFCBD5)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(
-                      color: Color(0xFF112A46),
-                      width: 1.4,
-                    ),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  isDense: true,
-                ),
-                items: [
+              _SelectionField(
+                labelText: 'Eclipse Type',
+                valueText: _formatEclipseSubtypeOption(astronomyEclipseSubtype),
+                currentValue: astronomyEclipseSubtype,
+                onChanged: onAstronomyEclipseSubtypeChanged,
+                options: [
                   for (final subtype in astronomyEclipseSubtypeOptions)
-                    DropdownMenuItem(
+                    _ChoiceItem(
                       value: subtype,
-                      child: Text(_formatEclipseSubtypeOption(subtype)),
+                      label: _formatEclipseSubtypeOption(subtype),
                     ),
                 ],
-                onChanged: onAstronomyEclipseSubtypeChanged,
               ),
               const SizedBox(height: 10),
               InkWell(
@@ -2075,47 +2495,42 @@ class _IntroPanel extends StatelessWidget {
                 subtitle: 'Cities, map picks, and ordered route distance',
                 initiallyExpanded: false,
                 children: [
-              DropdownButtonFormField<_DistanceUnitDisplay>(
-                initialValue: distanceUnitDisplay,
-                decoration: const InputDecoration(
-                  labelText: 'Distance units',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(
+              _SelectionField(
+                labelText: 'Distance units',
+                valueText: switch (distanceUnitDisplay) {
+                  _DistanceUnitDisplay.both => 'Both',
+                  _DistanceUnitDisplay.kilometers => 'Kilometers',
+                  _DistanceUnitDisplay.miles => 'Miles',
+                },
+                currentValue: distanceUnitDisplay,
+                onChanged: onDistanceUnitDisplayChanged,
+                options: const [
+                  _ChoiceItem(
                     value: _DistanceUnitDisplay.both,
-                    child: Text('Both'),
+                    label: 'Both',
                   ),
-                  DropdownMenuItem(
+                  _ChoiceItem(
                     value: _DistanceUnitDisplay.kilometers,
-                    child: Text('Kilometers'),
+                    label: 'Kilometers',
                   ),
-                  DropdownMenuItem(
+                  _ChoiceItem(
                     value: _DistanceUnitDisplay.miles,
-                    child: Text('Miles'),
+                    label: 'Miles',
                   ),
                 ],
-                onChanged: onDistanceUnitDisplayChanged,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: stopCount,
-                decoration: const InputDecoration(
-                  labelText: 'How many stops',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: [
+              _SelectionField(
+                labelText: 'How many stops',
+                valueText: '$stopCount stops',
+                currentValue: stopCount,
+                onChanged: onStopCountChanged,
+                options: [
                   for (var count = _minRouteStops;
                       count <= _maxRouteStops;
                       count += 1)
-                    DropdownMenuItem(
-                      value: count,
-                      child: Text('$count stops'),
-                    ),
+                    _ChoiceItem(value: count, label: '$count stops'),
                 ],
-                onChanged: onStopCountChanged,
               ),
               const SizedBox(height: 16),
               for (var index = 0; index < stopCount; index += 1) ...[
@@ -2364,6 +2779,27 @@ class _IntroPanel extends StatelessWidget {
     return '${observer.name ?? 'Observer'}: $daylightLabel, sun ${observer.sunAltitudeDegrees.toStringAsFixed(1)} deg, moon ${observer.moonAltitudeDegrees.toStringAsFixed(1)} deg, $moonLabel.';
   }
 
+  String _formatPlaybackPresetLabel(_AstronomyPlaybackPreset preset) {
+    return switch (preset) {
+      _AstronomyPlaybackPreset.oneDay => '1 day',
+      _AstronomyPlaybackPreset.sevenDays => '7 days',
+      _AstronomyPlaybackPreset.twentyEightDays => '28 days',
+      _AstronomyPlaybackPreset.threeSixtyFiveDays => '365 days',
+      _AstronomyPlaybackPreset.fiveYears => '5 years',
+      _AstronomyPlaybackPreset.tenYears => '10 years',
+      _AstronomyPlaybackPreset.custom => 'Custom',
+    };
+  }
+
+  String _formatPlaybackSpeedLabel(_AstronomyPlaybackSpeed speed) {
+    return switch (speed) {
+      _AstronomyPlaybackSpeed.slow => 'Slow',
+      _AstronomyPlaybackSpeed.normal => 'Normal',
+      _AstronomyPlaybackSpeed.fast => 'Fast',
+      _AstronomyPlaybackSpeed.veryFast => 'Very fast',
+    };
+  }
+
   String _formatEventSubtype(AstronomyEvent event) {
     return switch (event.subtype) {
       'solar_total' => 'Solar total',
@@ -2400,7 +2836,7 @@ class _IntroPanel extends StatelessWidget {
   }
 }
 
-class _CollapsiblePanel extends StatelessWidget {
+class _CollapsiblePanel extends StatefulWidget {
   const _CollapsiblePanel({
     required this.title,
     required this.children,
@@ -2414,46 +2850,360 @@ class _CollapsiblePanel extends StatelessWidget {
   final List<Widget> children;
 
   @override
+  State<_CollapsiblePanel> createState() => _CollapsiblePanelState();
+}
+
+class _CollapsiblePanelState extends State<_CollapsiblePanel> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8F3E8),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFD7E0E5)),
-        ),
-        child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          shape: RoundedRectangleBorder(
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F3E8),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD7E0E5)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
             borderRadius: BorderRadius.circular(18),
-          ),
-          collapsedShape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          title: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF112A46),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF112A46),
+                          ),
+                        ),
+                        if (widget.subtitle != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            widget.subtitle!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF335C67),
+                  ),
+                ],
+              ),
             ),
           ),
-          subtitle: subtitle == null
-              ? null
-              : Text(
-                  subtitle!,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF335C67),
-                    height: 1.35,
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: widget.children,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChoiceItem<T> {
+  const _ChoiceItem({
+    required this.value,
+    required this.label,
+    this.subtitle,
+  });
+
+  final T value;
+  final String label;
+  final String? subtitle;
+}
+
+class _SelectionField<T> extends StatefulWidget {
+  const _SelectionField({
+    required this.labelText,
+    required this.valueText,
+    required this.currentValue,
+    required this.options,
+    required this.onChanged,
+    this.helperText,
+    this.enabled = true,
+  });
+
+  final String labelText;
+  final String valueText;
+  final String? helperText;
+  final T? currentValue;
+  final List<_ChoiceItem<T>> options;
+  final ValueChanged<T?> onChanged;
+  final bool enabled;
+
+  @override
+  State<_SelectionField<T>> createState() => _SelectionFieldState<T>();
+}
+
+class _SelectionFieldState<T> extends State<_SelectionField<T>> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _SelectionField<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.enabled && _expanded) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = widget.enabled
+        ? const Color(0xFFBFCBD5)
+        : const Color(0xFFD7E0E5);
+    final textColor = widget.enabled
+        ? const Color(0xFF112A46)
+        : const Color(0xFF7B8B94);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: widget.enabled
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
+          borderRadius: BorderRadius.circular(4),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: widget.labelText,
+              helperText: widget.helperText,
+              border: const OutlineInputBorder(),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: borderColor),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: borderColor),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              isDense: true,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.valueText,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
-          children: children,
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  color: widget.enabled
+                      ? const Color(0xFF335C67)
+                      : const Color(0xFF9BA9B1),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
+        if (_expanded && widget.enabled) ...[
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFBFCBD5)),
+              borderRadius: BorderRadius.circular(4),
+              color: const Color(0xFFFDFBF7),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: widget.options.length,
+                separatorBuilder: (context, index) =>
+                    const Divider(height: 1, color: Color(0xFFD7E0E5)),
+                itemBuilder: (context, index) {
+                  final option = widget.options[index];
+                  final isSelected = option.value == widget.currentValue;
+                  return ListTile(
+                    dense: true,
+                    title: Text(option.label),
+                    subtitle: option.subtitle == null
+                        ? null
+                        : Text(option.subtitle!),
+                    trailing: isSelected
+                        ? const Icon(Icons.check, color: Color(0xFF112A46))
+                        : null,
+                    onTap: () {
+                      widget.onChanged(option.value);
+                      setState(() => _expanded = false);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+CityCatalogEntry? _findCityCatalogEntryByName(String name) {
+  for (final entry in cityCatalog) {
+    if (entry.name == name) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+class _CitySelectionField extends StatefulWidget {
+  const _CitySelectionField({
+    required this.labelText,
+    required this.valueText,
+    required this.currentValue,
+    required this.onChanged,
+  });
+
+  final String labelText;
+  final String valueText;
+  final CityCatalogEntry? currentValue;
+  final ValueChanged<CityCatalogEntry?> onChanged;
+
+  @override
+  State<_CitySelectionField> createState() => _CitySelectionFieldState();
+}
+
+class _CitySelectionFieldState extends State<_CitySelectionField> {
+  bool _expanded = false;
+  late final TextEditingController _queryController;
+
+  @override
+  void initState() {
+    super.initState();
+    _queryController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _queryController.text.trim().toLowerCase();
+    final filtered = cityCatalog
+        .where(
+          (entry) => query.isEmpty || entry.name.toLowerCase().contains(query),
+        )
+        .take(40)
+        .toList(growable: false);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(4),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: widget.labelText,
+              border: const OutlineInputBorder(),
+              enabledBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Color(0xFFBFCBD5)),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              isDense: true,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.valueText,
+                    style: const TextStyle(
+                      color: Color(0xFF112A46),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  color: const Color(0xFF335C67),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _queryController,
+            decoration: const InputDecoration(
+              labelText: 'Search city',
+              hintText: 'Type a city name',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFBFCBD5)),
+              borderRadius: BorderRadius.circular(4),
+              color: const Color(0xFFFDFBF7),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                itemCount: filtered.length,
+                separatorBuilder: (context, index) =>
+                    const Divider(height: 1, color: Color(0xFFD7E0E5)),
+                itemBuilder: (context, index) {
+                  final option = filtered[index];
+                  final isSelected = widget.currentValue?.name == option.name;
+                  return ListTile(
+                    dense: true,
+                    title: Text(option.name),
+                    trailing: isSelected
+                        ? const Icon(Icons.check, color: Color(0xFF112A46))
+                        : null,
+                    onTap: () {
+                      widget.onChanged(option);
+                      _queryController.clear();
+                      setState(() => _expanded = false);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

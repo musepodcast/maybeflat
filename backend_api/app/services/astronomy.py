@@ -354,7 +354,7 @@ def get_astronomy_snapshot(
     path_step_minutes: int = 30,
 ) -> AstronomySnapshotResponse:
     timestamp = _parse_timestamp(timestamp_utc)
-    rounded_timestamp = timestamp.replace(second=0, microsecond=0)
+    rounded_timestamp = timestamp.replace(microsecond=0)
     rounded_latitude = (
         round(observer_latitude, 6) if observer_latitude is not None else None
     )
