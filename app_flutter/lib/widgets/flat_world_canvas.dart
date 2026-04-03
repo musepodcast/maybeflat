@@ -2442,63 +2442,143 @@ class _FlatWorldPainter extends CustomPainter {
     final moonLongitude = snapshot.moon.subpoint.longitude;
     final moonStrength =
         showMoonPath ? (snapshot.moon.illuminationFraction ?? 0) * 0.22 : 0.0;
+    final latitudeStep = isInteracting ? 5.0 : 2.5;
+    final longitudeStep = isInteracting ? 5.0 : 2.5;
+    final positions = <Offset>[];
+    final colors = <Color>[];
+    final indices = <int>[];
 
-    for (var latitude = 85; latitude >= -90; latitude -= 5) {
-      final nextLatitude = math.max(-90, latitude - 5).toDouble();
-      for (var longitude = -180; longitude < 180; longitude += 5) {
-        final nextLongitude = math.min(180, longitude + 5).toDouble();
-        final cellLatitude = latitude - 2.5;
-        final cellLongitude = longitude + 2.5;
-        final sunIncidence = _hemisphereIncidence(
-          cellLatitude,
-          cellLongitude,
-          sunLatitude,
-          sunLongitude,
+    for (double latitude = 90.0; latitude > -90.0; latitude -= latitudeStep) {
+      final nextLatitude = math.max(-90.0, latitude - latitudeStep);
+      for (
+        double longitude = -180.0;
+        longitude < 180.0;
+        longitude += longitudeStep
+      ) {
+        final nextLongitude = math.min(180.0, longitude + longitudeStep);
+        final topLeft = _projectLatLon(center, mapRadius, latitude, longitude);
+        final topRight = _projectLatLon(
+          center,
+          mapRadius,
+          latitude,
+          nextLongitude,
         );
-        final moonIncidence = _hemisphereIncidence(
-          cellLatitude,
-          cellLongitude,
-          moonLatitude,
-          moonLongitude,
+        final bottomRight = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          nextLongitude,
         );
-        double darkness = sunIncidence >= 0
-            ? 0.2 * (1 - sunIncidence)
-            : 0.34 + 0.34 * (-sunIncidence).clamp(0.0, 1.0).toDouble();
-        darkness -=
-            moonStrength * moonIncidence.clamp(0.0, 1.0).toDouble();
-        darkness = darkness.clamp(0.02, 0.68).toDouble();
+        final bottomLeft = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          longitude,
+        );
 
-        final cellPath = Path()
-          ..moveTo(
-            _projectLatLon(center, mapRadius, latitude.toDouble(), longitude.toDouble()).dx,
-            _projectLatLon(center, mapRadius, latitude.toDouble(), longitude.toDouble()).dy,
-          )
-          ..lineTo(
-            _projectLatLon(center, mapRadius, latitude.toDouble(), nextLongitude).dx,
-            _projectLatLon(center, mapRadius, latitude.toDouble(), nextLongitude).dy,
-          )
-          ..lineTo(
-            _projectLatLon(center, mapRadius, nextLatitude, nextLongitude).dx,
-            _projectLatLon(center, mapRadius, nextLatitude, nextLongitude).dy,
-          )
-          ..lineTo(
-            _projectLatLon(center, mapRadius, nextLatitude, longitude.toDouble()).dx,
-            _projectLatLon(center, mapRadius, nextLatitude, longitude.toDouble()).dy,
-          )
-          ..close();
-
-        final shadePaint = Paint()
-          ..color = Color.lerp(
-                const Color(0x00000000),
-                const Color(0xCC07162B),
-                darkness,
-              ) ??
-              const Color(0x6607162B)
-          ..style = PaintingStyle.fill
-          ..isAntiAlias = true;
-        canvas.drawPath(cellPath, shadePaint);
+        final baseIndex = positions.length;
+        positions.addAll([topLeft, topRight, bottomRight, bottomLeft]);
+        colors.addAll([
+          _astronomyShadeColor(
+            latitude: latitude,
+            longitude: longitude,
+            sunLatitude: sunLatitude,
+            sunLongitude: sunLongitude,
+            moonLatitude: moonLatitude,
+            moonLongitude: moonLongitude,
+            moonStrength: moonStrength,
+          ),
+          _astronomyShadeColor(
+            latitude: latitude,
+            longitude: nextLongitude,
+            sunLatitude: sunLatitude,
+            sunLongitude: sunLongitude,
+            moonLatitude: moonLatitude,
+            moonLongitude: moonLongitude,
+            moonStrength: moonStrength,
+          ),
+          _astronomyShadeColor(
+            latitude: nextLatitude,
+            longitude: nextLongitude,
+            sunLatitude: sunLatitude,
+            sunLongitude: sunLongitude,
+            moonLatitude: moonLatitude,
+            moonLongitude: moonLongitude,
+            moonStrength: moonStrength,
+          ),
+          _astronomyShadeColor(
+            latitude: nextLatitude,
+            longitude: longitude,
+            sunLatitude: sunLatitude,
+            sunLongitude: sunLongitude,
+            moonLatitude: moonLatitude,
+            moonLongitude: moonLongitude,
+            moonStrength: moonStrength,
+          ),
+        ]);
+        indices.addAll([
+          baseIndex,
+          baseIndex + 1,
+          baseIndex + 2,
+          baseIndex,
+          baseIndex + 2,
+          baseIndex + 3,
+        ]);
       }
     }
+
+    final shadePaint = Paint()..isAntiAlias = true;
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        positions,
+        colors: colors,
+        indices: indices,
+      ),
+      BlendMode.srcOver,
+      shadePaint,
+    );
+  }
+
+  Color _astronomyShadeColor({
+    required double latitude,
+    required double longitude,
+    required double sunLatitude,
+    required double sunLongitude,
+    required double moonLatitude,
+    required double moonLongitude,
+    required double moonStrength,
+  }) {
+    final sunIncidence = _hemisphereIncidence(
+      latitude,
+      longitude,
+      sunLatitude,
+      sunLongitude,
+    );
+    final moonIncidence = _hemisphereIncidence(
+      latitude,
+      longitude,
+      moonLatitude,
+      moonLongitude,
+    );
+    final daylightBlend = _smoothStep(-0.18, 0.12, sunIncidence);
+    double darkness = ui.lerpDouble(0.66, 0.03, daylightBlend) ?? 0.34;
+    darkness -=
+        moonStrength *
+        moonIncidence.clamp(0.0, 1.0).toDouble() *
+        (1.0 - daylightBlend);
+    darkness = darkness.clamp(0.02, 0.68).toDouble();
+    return Color.lerp(
+          const Color(0x00000000),
+          const Color(0xCC07162B),
+          darkness,
+        ) ??
+        const Color(0x6607162B);
+  }
+
+  double _smoothStep(double edge0, double edge1, double value) {
+    final t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0).toDouble();
+    return t * t * (3.0 - (2.0 * t));
   }
 
   void _paintAstronomyPath(
