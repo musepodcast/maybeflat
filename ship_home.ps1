@@ -1,11 +1,11 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [Parameter(Mandatory = $true)]
     [string]$Message,
     [string]$Tag,
     [string]$ProductionPath
 )
+
+$ErrorActionPreference = "Stop"
 
 function Invoke-Git {
     param(
