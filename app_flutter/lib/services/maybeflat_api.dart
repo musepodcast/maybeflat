@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/astronomy_event.dart';
 import '../models/astronomy_snapshot.dart';
+import '../models/city_search_result.dart';
 import '../models/measure_result.dart';
 import '../models/map_scene.dart';
 import '../models/place_marker.dart';
@@ -176,6 +177,29 @@ class MaybeflatApi {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return (payload['events'] as List<dynamic>? ?? const [])
         .map((event) => AstronomyEvent.fromJson(event as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<List<CitySearchResult>> searchCities({
+    required String query,
+    int limit = 12,
+  }) async {
+    final uri = Uri.parse('$baseUrl/map/cities/search').replace(
+      queryParameters: {
+        'q': query,
+        'limit': '$limit',
+      },
+    );
+    final response = await _client.get(uri).timeout(actionTimeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to search cities: ${response.statusCode}');
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['results'] as List<dynamic>? ?? const [])
+        .map(
+          (result) => CitySearchResult.fromJson(result as Map<String, dynamic>),
+        )
         .toList(growable: false);
   }
 }

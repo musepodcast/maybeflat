@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from app.schemas.map_models import (
     AstronomyEventListResponse,
     AstronomySnapshotResponse,
+    CitySearchResponse,
     FlatPointResponse,
     MapModelResponse,
     MapSceneResponse,
@@ -11,6 +12,7 @@ from app.schemas.map_models import (
     TileManifestResponse,
     TransformRequest,
 )
+from app.data.city_search import search_city_entries
 from app.services.astronomy import get_astronomy_snapshot, list_astronomy_events
 from app.services.flat_world import (
     build_model_summary,
@@ -82,6 +84,31 @@ def get_events(
         subgroup=subgroup,
         from_timestamp_utc=from_timestamp_utc,
         limit=limit,
+    )
+
+
+@router.get("/cities/search", response_model=CitySearchResponse)
+def get_city_search(
+    q: str = Query(default=""),
+    limit: int = Query(default=12, ge=1, le=20),
+) -> CitySearchResponse:
+    results = search_city_entries(q, limit=limit)
+    return CitySearchResponse(
+        query=q,
+        results=[
+            {
+                "geoname_id": entry.geoname_id,
+                "name": entry.name,
+                "display_name": entry.display_name,
+                "latitude": entry.latitude,
+                "longitude": entry.longitude,
+                "country_code": entry.country_code,
+                "country_name": entry.country_name,
+                "admin1_name": entry.admin1_name,
+                "population": entry.population,
+            }
+            for entry in results
+        ],
     )
 
 

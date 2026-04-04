@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/astronomy_event.dart';
 import '../models/astronomy_snapshot.dart';
-import '../data/city_catalog.dart';
+import '../models/city_search_result.dart';
 import '../models/map_label.dart';
 import '../models/map_scene.dart';
 import '../models/map_shape.dart';
@@ -51,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _astronomyObserverController =
       TextEditingController();
   final ScrollController _astronomyEventScrollController = ScrollController();
+  final Map<String, List<CitySearchResult>> _citySearchCache = {};
   final List<TextEditingController> _routeControllers = List.generate(
     _maxRouteStops,
     (_) => TextEditingController(),
@@ -106,7 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
   _AstronomyEventFilter _astronomyEventFilter = _AstronomyEventFilter.all;
   String _astronomyEclipseSubtype = 'all';
   String? _selectedAstronomyEventId;
-  CityCatalogEntry? _astronomyObserver;
+  CitySearchResult? _astronomyObserver;
   DateTime _astronomyCustomTime = DateTime.now();
   DateTime _astronomyPlaybackStart = DateTime.now();
   DateTime _astronomyPlaybackEnd = DateTime.now().add(const Duration(days: 1));
@@ -819,7 +820,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final observer = _astronomyObserver;
       final snapshot = await _api.loadAstronomySnapshot(
         timestampUtc: _astronomyTimestampUtc(),
-        observerName: observer?.name,
+        observerName: observer?.displayName,
         observerLatitude: observer?.latitude,
         observerLongitude: observer?.longitude,
       );
@@ -933,10 +934,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _setAstronomyObserver(CityCatalogEntry? observer) {
+  Future<List<CitySearchResult>> _searchCities(String query) async {
+    final cacheKey = query.trim().toLowerCase();
+    final cached = _citySearchCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    if (_backendStatus == _BackendStatus.offline) {
+      return const [];
+    }
+
+    try {
+      final results = await _api.searchCities(query: query, limit: 12);
+      _citySearchCache[cacheKey] = results;
+      return results;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  void _setAstronomyObserver(CitySearchResult? observer) {
     setState(() {
       _astronomyObserver = observer;
-      _astronomyObserverController.text = observer?.name ?? '';
+      _astronomyObserverController.text = observer?.displayName ?? '';
     });
     if (_shouldShowAstronomy) {
       _loadAstronomy();
@@ -1060,8 +1081,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await _jumpToAstronomyEvent(nextEvent);
   }
 
-  Future<void> _setRouteStopFromCatalog(
-    CityCatalogEntry entry,
+  Future<void> _setRouteStopFromSearchResult(
+    CitySearchResult entry,
     int stopIndex,
   ) async {
     if (_backendStatus != _BackendStatus.connected) {
@@ -1079,7 +1100,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final marker = await _api.transformPoint(
-        name: entry.name,
+        name: entry.displayName,
         latitude: entry.latitude,
         longitude: entry.longitude,
       );
@@ -1089,8 +1110,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() {
         _routePoints[stopIndex] = marker;
-        _routePointSources[stopIndex] = entry.name;
-        _routeControllers[stopIndex].text = entry.name;
+        _routePointSources[stopIndex] = entry.displayName;
+        _routeControllers[stopIndex].text = entry.displayName;
       });
 
       await _refreshRouteMeasurement();
@@ -1305,8 +1326,9 @@ class _HomeScreenState extends State<HomeScreen> {
           astronomyEclipseSubtypeOptions: _availableAstronomyEclipseSubtypes,
           showAstronomyEventPicker: _showAstronomyEventPicker,
           astronomyObserverController: _astronomyObserverController,
+          onSearchCities: _searchCities,
           astronomyEventScrollController: _astronomyEventScrollController,
-          astronomyObserverName: _astronomyObserver?.name,
+          astronomyObserverName: _astronomyObserver?.displayName,
           astronomyCustomTimeLabel: _formatAstronomyTimeLabel(
             _astronomyCustomTime.toUtc(),
           ),
@@ -1426,7 +1448,7 @@ class _HomeScreenState extends State<HomeScreen> {
             }
             _setStopCount(value);
           },
-          onStopCitySelected: _setRouteStopFromCatalog,
+          onStopCitySelected: _setRouteStopFromSearchResult,
           onPickStop: _setPickStop,
           onClearRoute: () => setState(() {
             _clearRoutePlanner();
@@ -1483,7 +1505,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       astronomySnapshot: _astronomySnapshot,
                       showSunPath: _showSunPath,
                       showMoonPath: _showMoonPath,
-                      astronomyObserverName: _astronomyObserver?.name,
+                      astronomyObserverName: _astronomyObserver?.displayName,
                       routePoints: _activeRoutePoints,
                       activePickLabel: _pickStopIndex == null
                           ? null
@@ -1565,6 +1587,7 @@ class _IntroPanel extends StatelessWidget {
     required this.astronomyEclipseSubtypeOptions,
     required this.showAstronomyEventPicker,
     required this.astronomyObserverController,
+    required this.onSearchCities,
     required this.astronomyEventScrollController,
     required this.astronomyObserverName,
     required this.astronomyCustomTimeLabel,
@@ -1655,6 +1678,7 @@ class _IntroPanel extends StatelessWidget {
   final List<String> astronomyEclipseSubtypeOptions;
   final bool showAstronomyEventPicker;
   final TextEditingController astronomyObserverController;
+  final Future<List<CitySearchResult>> Function(String query) onSearchCities;
   final ScrollController astronomyEventScrollController;
   final String? astronomyObserverName;
   final String astronomyCustomTimeLabel;
@@ -1687,7 +1711,7 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowMoonPathChanged;
   final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
   final VoidCallback onAstronomyDateTimePressed;
-  final ValueChanged<CityCatalogEntry?> onAstronomyObserverSelected;
+  final ValueChanged<CitySearchResult?> onAstronomyObserverSelected;
   final VoidCallback onClearAstronomyObserver;
   final ValueChanged<_AstronomyPlaybackPreset?> onAstronomyPlaybackPresetChanged;
   final ValueChanged<_AstronomyPlaybackSpeed?> onAstronomyPlaybackSpeedChanged;
@@ -1705,7 +1729,7 @@ class _IntroPanel extends StatelessWidget {
   final Future<void> Function() onReload;
   final ValueChanged<_DistanceUnitDisplay?> onDistanceUnitDisplayChanged;
   final ValueChanged<int?> onStopCountChanged;
-  final void Function(CityCatalogEntry entry, int stopIndex) onStopCitySelected;
+  final void Function(CitySearchResult entry, int stopIndex) onStopCitySelected;
   final ValueChanged<int> onPickStop;
   final VoidCallback onClearRoute;
 
@@ -1902,13 +1926,11 @@ class _IntroPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              _CitySelectionField(
-                labelText: 'Observer city',
-                valueText: astronomyObserverName ?? 'Select observer city',
-                currentValue: astronomyObserverName == null
-                    ? null
-                    : _findCityCatalogEntryByName(astronomyObserverName!),
-                onChanged: onAstronomyObserverSelected,
+              _CitySearchField(
+                label: 'Observer city',
+                controller: astronomyObserverController,
+                onSelected: onAstronomyObserverSelected,
+                searchCities: onSearchCities,
               ),
               const SizedBox(height: 8),
               Row(
@@ -2516,6 +2538,7 @@ class _IntroPanel extends StatelessWidget {
                 _CitySearchField(
                   label: 'Stop ${index + 1} city',
                   controller: stopControllers[index],
+                  searchCities: onSearchCities,
                   onSelected: (entry) => onStopCitySelected(entry, index),
                 ),
                 const SizedBox(height: 8),
@@ -3048,105 +3071,100 @@ class _SelectionFieldState<T> extends State<_SelectionField<T>> {
   }
 }
 
-CityCatalogEntry? _findCityCatalogEntryByName(String name) {
-  for (final entry in cityCatalog) {
-    if (entry.name == name) {
-      return entry;
-    }
-  }
-  return null;
-}
-
-class _CitySelectionField extends StatefulWidget {
-  const _CitySelectionField({
-    required this.labelText,
-    required this.valueText,
-    required this.currentValue,
-    required this.onChanged,
+class _CitySearchField extends StatefulWidget {
+  const _CitySearchField({
+    required this.label,
+    required this.controller,
+    required this.onSelected,
+    required this.searchCities,
   });
 
-  final String labelText;
-  final String valueText;
-  final CityCatalogEntry? currentValue;
-  final ValueChanged<CityCatalogEntry?> onChanged;
+  final String label;
+  final TextEditingController controller;
+  final ValueChanged<CitySearchResult> onSelected;
+  final Future<List<CitySearchResult>> Function(String query) searchCities;
 
   @override
-  State<_CitySelectionField> createState() => _CitySelectionFieldState();
+  State<_CitySearchField> createState() => _CitySearchFieldState();
 }
 
-class _CitySelectionFieldState extends State<_CitySelectionField> {
-  bool _expanded = false;
-  late final TextEditingController _queryController;
+class _CitySearchFieldState extends State<_CitySearchField> {
+  late final FocusNode _focusNode;
+  Timer? _debounce;
+  int _requestToken = 0;
+  bool _isLoading = false;
+  List<CitySearchResult> _results = const [];
 
   @override
   void initState() {
     super.initState();
-    _queryController = TextEditingController();
+    _focusNode = FocusNode()
+      ..addListener(() {
+        if (_focusNode.hasFocus) {
+          _queueSearch(widget.controller.text);
+        } else {
+          Future<void>.delayed(const Duration(milliseconds: 120), () {
+            if (!mounted || _focusNode.hasFocus) {
+              return;
+            }
+            setState(() {
+              _results = const [];
+              _isLoading = false;
+            });
+          });
+        }
+      });
   }
 
   @override
   void dispose() {
-    _queryController.dispose();
+    _debounce?.cancel();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  void _queueSearch(String query) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 220), () {
+      _performSearch(query);
+    });
+  }
+
+  Future<void> _performSearch(String query) async {
+    final token = ++_requestToken;
+    setState(() {
+      _isLoading = true;
+    });
+
+    final results = await widget.searchCities(query);
+    if (!mounted || token != _requestToken) {
+      return;
+    }
+
+    setState(() {
+      _results = results;
+      _isLoading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final query = _queryController.text.trim().toLowerCase();
-    final filtered = cityCatalog
-        .where(
-          (entry) => query.isEmpty || entry.name.toLowerCase().contains(query),
-        )
-        .take(40)
-        .toList(growable: false);
-
+    final showResults = _focusNode.hasFocus && (_isLoading || _results.isNotEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkWell(
-          onTap: () => setState(() => _expanded = !_expanded),
-          borderRadius: BorderRadius.circular(4),
-          child: InputDecorator(
-            decoration: InputDecoration(
-              labelText: widget.labelText,
-              border: const OutlineInputBorder(),
-              enabledBorder: OutlineInputBorder(
-                borderSide: const BorderSide(color: Color(0xFFBFCBD5)),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              isDense: true,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.valueText,
-                    style: const TextStyle(
-                      color: Color(0xFF112A46),
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  color: const Color(0xFF335C67),
-                ),
-              ],
-            ),
+        TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          decoration: InputDecoration(
+            labelText: widget.label,
+            hintText: 'Type a city, state, or country',
+            border: const OutlineInputBorder(),
+            isDense: true,
           ),
+          onChanged: _queueSearch,
         ),
-        if (_expanded) ...[
-          const SizedBox(height: 8),
-          TextField(
-            controller: _queryController,
-            decoration: const InputDecoration(
-              labelText: 'Search city',
-              hintText: 'Type a city name',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
+        if (showResults) ...[
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
@@ -3156,78 +3174,50 @@ class _CitySelectionFieldState extends State<_CitySelectionField> {
             ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
-              child: ListView.separated(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                itemCount: filtered.length,
-                separatorBuilder: (context, index) =>
-                    const Divider(height: 1, color: Color(0xFFD7E0E5)),
-                itemBuilder: (context, index) {
-                  final option = filtered[index];
-                  final isSelected = widget.currentValue?.name == option.name;
-                  return ListTile(
-                    dense: true,
-                    title: Text(option.name),
-                    trailing: isSelected
-                        ? const Icon(Icons.check, color: Color(0xFF112A46))
-                        : null,
-                    onTap: () {
-                      widget.onChanged(option);
-                      _queryController.clear();
-                      setState(() => _expanded = false);
-                    },
-                  );
-                },
-              ),
+              child: _isLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                        'Searching cities...',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF335C67),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      itemCount: _results.length,
+                      separatorBuilder: (context, index) => const Divider(
+                        height: 1,
+                        color: Color(0xFFD7E0E5),
+                      ),
+                      itemBuilder: (context, index) {
+                        final option = _results[index];
+                        return ListTile(
+                          dense: true,
+                          title: Text(option.displayName),
+                          subtitle: Text(
+                            option.population > 0
+                                ? 'Population ${option.population}'
+                                : option.countryName,
+                          ),
+                          onTap: () {
+                            widget.controller.text = option.displayName;
+                            widget.onSelected(option);
+                            _focusNode.unfocus();
+                            setState(() {
+                              _results = const [];
+                            });
+                          },
+                        );
+                      },
+                    ),
             ),
           ),
         ],
       ],
-    );
-  }
-}
-
-class _CitySearchField extends StatelessWidget {
-  const _CitySearchField({
-    required this.label,
-    required this.controller,
-    required this.onSelected,
-  });
-
-  final String label;
-  final TextEditingController controller;
-  final ValueChanged<CityCatalogEntry> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Autocomplete<CityCatalogEntry>(
-      key: ValueKey('$label:${controller.text}'),
-      initialValue: TextEditingValue(text: controller.text),
-      displayStringForOption: (option) => option.name,
-      optionsBuilder: (textEditingValue) {
-        final query = textEditingValue.text.trim().toLowerCase();
-        if (query.isEmpty) {
-          return cityCatalog.take(8);
-        }
-
-        return cityCatalog
-            .where((entry) => entry.name.toLowerCase().contains(query))
-            .take(8);
-      },
-      onSelected: onSelected,
-      fieldViewBuilder:
-          (context, textEditingController, focusNode, onSubmitted) {
-        return TextField(
-          controller: textEditingController,
-          focusNode: focusNode,
-          decoration: InputDecoration(
-            labelText: label,
-            hintText: 'Type a city name',
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-        );
-      },
     );
   }
 }

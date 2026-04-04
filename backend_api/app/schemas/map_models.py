@@ -135,3 +135,20 @@ class AstronomyEventResponse(BaseModel):
 
 class AstronomyEventListResponse(BaseModel):
     events: list[AstronomyEventResponse]
+
+
+class CitySearchResultResponse(BaseModel):
+    geoname_id: int
+    name: str
+    display_name: str
+    latitude: float
+    longitude: float
+    country_code: str
+    country_name: str
+    admin1_name: str | None = None
+    population: int
+
+
+class CitySearchResponse(BaseModel):
+    query: str
+    results: list[CitySearchResultResponse]

@@ -16,6 +16,16 @@ Maybeflat can also load a separate real time-zone boundary dataset from:
 
 `docs/data/timezone_boundaries.geojson`
 
+Maybeflat can also load a local global city search dataset from:
+
+`docs/data/geonames_cities5000.txt`
+
+with supporting lookup files:
+
+`docs/data/admin1CodesASCII.txt`
+
+`docs/data/countryInfo.txt`
+
 The checked-in real time-zone dataset currently comes from:
 
 `timezone-boundary-builder` `timezones-now.geojson.zip`
@@ -43,6 +53,7 @@ Notes:
 - country boundaries are rendered as stroked overlays on top of land masses when `country_boundaries.geojson` is present
 - state/province boundaries are rendered as a separate stroked overlay when `state_boundaries.geojson` is present
 - real civil time zones can be rendered from `timezone_boundaries.geojson` when that dataset is present
+- global city search can be served from the backend when the GeoNames city dataset files are present
 - These are real source coast coordinates, but the Maybeflat transform is still a custom flat-world model, not a conventional true-scale projection
 
 Recommended next input:
