@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/astronomy_event.dart';
@@ -11,18 +12,56 @@ import '../models/place_marker.dart';
 
 class MaybeflatApi {
   MaybeflatApi({
-    this.baseUrl = 'http://127.0.0.1:8002',
+    String? baseUrl,
     this.healthTimeout = const Duration(seconds: 6),
     this.sceneTimeout = const Duration(seconds: 20),
     this.actionTimeout = const Duration(seconds: 10),
     http.Client? client,
-  }) : _client = client ?? http.Client();
+  }) : baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
+       _client = client ?? http.Client();
 
   final String baseUrl;
   final Duration healthTimeout;
   final Duration sceneTimeout;
   final Duration actionTimeout;
   final http.Client _client;
+
+  static String _defaultBaseUrl() {
+    const configuredBaseUrl = String.fromEnvironment(
+      'MAYBEFLAT_API_BASE_URL',
+      defaultValue: '',
+    );
+    if (configuredBaseUrl.isNotEmpty) {
+      return configuredBaseUrl;
+    }
+
+    if (!kIsWeb) {
+      return 'http://127.0.0.1:8002';
+    }
+
+    final host = Uri.base.host.toLowerCase();
+    if (host == 'localhost' || host == '127.0.0.1') {
+      return 'http://127.0.0.1:8002';
+    }
+
+    return '/api';
+  }
+
+  static String _normalizeBaseUrl(String baseUrl) {
+    final trimmed = baseUrl.trim();
+    if (trimmed.isEmpty) {
+      return 'http://127.0.0.1:8002';
+    }
+
+    final parsed = Uri.parse(trimmed);
+    final resolved = parsed.hasScheme || parsed.hasAuthority
+        ? parsed
+        : Uri.base.resolveUri(parsed);
+    final normalizedPath = resolved.path.endsWith('/')
+        ? resolved.path.substring(0, resolved.path.length - 1)
+        : resolved.path;
+    return resolved.replace(path: normalizedPath).toString();
+  }
 
   Future<bool> checkHealth() async {
     try {

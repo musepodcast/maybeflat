@@ -76,6 +76,16 @@ From the repo root:
 
 The Flutter client is configured to call `http://127.0.0.1:8002` by default.
 
+## Beta Launch
+
+For the current Cloudflare Pages beta launch flow for `maybeflat.com`, see [docs/deploy_beta.md](docs/deploy_beta.md).
+
+For full VPS self-hosting with Docker Compose and Caddy, see [docs/self_hosted_production.md](docs/self_hosted_production.md).
+
+For Windows home self-hosting with Docker Desktop and Cloudflare Tunnel, see [docs/home_self_hosting_windows.md](docs/home_self_hosting_windows.md).
+
+For a one-command dev-to-GitHub-to-production workflow on Windows home hosting, see [docs/home_release_workflow.md](docs/home_release_workflow.md).
+
 ## Next Build Steps
 
 1. Replace the seeded markers with backend-fed search results.

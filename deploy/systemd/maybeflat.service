@@ -1,0 +1,19 @@
+[Unit]
+Description=Maybeflat production stack
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=__DEPLOY_USER__
+Group=__DEPLOY_USER__
+WorkingDirectory=__DEPLOY_PATH__
+ExecStart=/usr/bin/docker compose --env-file __DEPLOY_PATH__/.env.production up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file __DEPLOY_PATH__/.env.production down
+ExecReload=/usr/bin/docker compose --env-file __DEPLOY_PATH__/.env.production up -d --remove-orphans
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

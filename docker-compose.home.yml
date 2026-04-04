@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend_api/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 8002
+      MAYBEFLAT_ALLOWED_ORIGINS: ${MAYBEFLAT_ALLOWED_ORIGINS:-https://maybeflat.com,https://www.maybeflat.com}
+      MAYBEFLAT_ALLOWED_ORIGIN_REGEX: ${MAYBEFLAT_ALLOWED_ORIGIN_REGEX:-^https:\/\/.*\.pages\.dev$}
+    expose:
+      - "8002"
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - ./Caddyfile.home:/etc/caddy/Caddyfile:ro
+      - ./app_flutter/build/web:/srv:ro
+    ports:
+      - "127.0.0.1:8080:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN}

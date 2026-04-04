@@ -1,0 +1,26 @@
+:80 {
+	@www host www.maybeflat.com
+	handle @www {
+		redir https://maybeflat.com{uri} permanent
+	}
+
+	root * /srv
+	encode zstd gzip
+
+	handle_path /api/* {
+		reverse_proxy api:8002
+	}
+
+	@static {
+		file
+	}
+
+	handle @static {
+		file_server
+	}
+
+	handle {
+		rewrite * /index.html
+		file_server
+	}
+}

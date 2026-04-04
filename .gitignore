@@ -11,6 +11,11 @@ __pycache__/
 .DS_Store
 build/
 coverage/
+node_modules/
+.wrangler/
+var/log/
+.env.home
+.env.production
 backend_api/.pytest_cache/
 app_flutter/.packages
 app_flutter/.flutter-plugins
