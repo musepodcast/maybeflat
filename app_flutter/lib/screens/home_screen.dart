@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -14,10 +15,15 @@ import '../services/maybeflat_api.dart';
 import '../widgets/flat_world_canvas.dart';
 
 enum _BackendStatus { checking, connected, offline, degraded }
+
 enum _DistanceUnitDisplay { both, kilometers, miles }
+
 enum _OuterEdgeMode { coastline, country, both }
+
 enum _AstronomyTimeMode { current, custom }
+
 enum _AstronomyEventFilter { all, solar, lunar }
+
 enum _AstronomyPlaybackPreset {
   oneDay,
   sevenDays,
@@ -27,7 +33,9 @@ enum _AstronomyPlaybackPreset {
   tenYears,
   custom,
 }
+
 enum _AstronomyPlaybackSpeed { slow, normal, fast, veryFast }
+
 enum _TimeZoneMode { approximate, real }
 
 const int _minRouteStops = 2;
@@ -68,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoadingAstronomyEvents = false;
   bool _isAstronomyPlaying = false;
   bool _showAstronomyEventPicker = false;
+  bool _showSettingsPanel = false;
   double _mapViewScale = 1.0;
   bool _showGrid = true;
   bool _showTimeZones = false;
@@ -165,9 +174,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    final requestedDetail = _sceneCache.isEmpty
-        ? _interactiveSceneDetail()
-        : _currentSceneDetail();
+    final requestedDetail =
+        _sceneCache.isEmpty ? _interactiveSceneDetail() : _currentSceneDetail();
     final includeStateBoundaries = _shouldLoadStateBoundaries();
     final sceneCacheKey = _sceneCacheKey(
       requestedDetail,
@@ -209,9 +217,8 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         _sceneCache.clear();
         setState(() {
-          _backendStatus = isHealthy
-              ? _BackendStatus.degraded
-              : _BackendStatus.offline;
+          _backendStatus =
+              isHealthy ? _BackendStatus.degraded : _BackendStatus.offline;
           _error = isHealthy
               ? 'Backend responded, but the scene payload could not be loaded.'
               : 'Backend is offline. Start the FastAPI server to load live map data.';
@@ -322,6 +329,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (logicalWidth >= 1500) {
         return 'desktop';
       }
+      if (logicalWidth >= 420) {
+        return 'desktop';
+      }
       return 'mobile';
     }
 
@@ -329,6 +339,9 @@ class _HomeScreenState extends State<HomeScreen> {
       return 'full';
     }
     if (logicalWidth >= 900) {
+      return 'desktop';
+    }
+    if (logicalWidth >= 420) {
       return 'desktop';
     }
     return 'mobile';
@@ -343,6 +356,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (logicalWidth >= 900) {
       return 'desktop';
     }
+    if (logicalWidth >= 420) {
+      return 'desktop';
+    }
     return 'mobile';
   }
 
@@ -350,6 +366,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final view = WidgetsBinding.instance.platformDispatcher.views.first;
     final logicalWidth = view.physicalSize.width / view.devicePixelRatio;
     if (logicalWidth >= 1500) {
+      return 'desktop';
+    }
+    if (logicalWidth >= 420) {
       return 'desktop';
     }
     return 'mobile';
@@ -493,10 +512,8 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _astronomyPlaybackCurrentTime() {
     final startUtc = _astronomyPlaybackStart.toUtc();
     final endUtc = _astronomyPlaybackEnd.toUtc();
-    final totalMilliseconds = endUtc
-        .difference(startUtc)
-        .inMilliseconds
-        .clamp(1, 1 << 30);
+    final totalMilliseconds =
+        endUtc.difference(startUtc).inMilliseconds.clamp(1, 1 << 30);
     final currentMilliseconds =
         (totalMilliseconds * _astronomyPlaybackProgress).round();
     return startUtc.add(Duration(milliseconds: currentMilliseconds)).toLocal();
@@ -533,7 +550,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _syncAstronomyTimer() {
     _astronomyTimer?.cancel();
-    if (!_shouldShowAstronomy || _astronomyTimeMode != _AstronomyTimeMode.current) {
+    if (!_shouldShowAstronomy ||
+        _astronomyTimeMode != _AstronomyTimeMode.current) {
       return;
     }
     _astronomyTimer = Timer.periodic(
@@ -566,16 +584,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _astronomyPlaybackEnd = end;
     }
     final current = _astronomyCustomTime;
-    final totalMilliseconds = end
-        .difference(start)
-        .inMilliseconds
-        .clamp(1, 1 << 30);
-    final elapsedMilliseconds = current
-        .difference(start)
-        .inMilliseconds
-        .clamp(0, totalMilliseconds);
-    _astronomyPlaybackProgress =
-        elapsedMilliseconds / totalMilliseconds;
+    final totalMilliseconds =
+        end.difference(start).inMilliseconds.clamp(1, 1 << 30);
+    final elapsedMilliseconds =
+        current.difference(start).inMilliseconds.clamp(0, totalMilliseconds);
+    _astronomyPlaybackProgress = elapsedMilliseconds / totalMilliseconds;
   }
 
   void _applyAstronomyPlaybackPreset(_AstronomyPlaybackPreset? preset) {
@@ -754,18 +767,21 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _astronomyEvents = events;
-        if (!_availableAstronomyEclipseSubtypes.contains(_astronomyEclipseSubtype)) {
+        if (!_availableAstronomyEclipseSubtypes
+            .contains(_astronomyEclipseSubtype)) {
           _astronomyEclipseSubtype = 'all';
         }
         if (_selectedAstronomyEventId == null && events.isNotEmpty) {
           final filtered = _filteredAstronomyEvents;
-          _selectedAstronomyEventId = filtered.isEmpty ? null : filtered.first.id;
+          _selectedAstronomyEventId =
+              filtered.isEmpty ? null : filtered.first.id;
         } else if (_selectedAstronomyEventId != null &&
             _filteredAstronomyEvents.every(
               (event) => event.id != _selectedAstronomyEventId,
             )) {
           final filtered = _filteredAstronomyEvents;
-          _selectedAstronomyEventId = filtered.isEmpty ? null : filtered.first.id;
+          _selectedAstronomyEventId =
+              filtered.isEmpty ? null : filtered.first.id;
         }
       });
     } catch (_) {
@@ -802,7 +818,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       setState(() {
-        _astronomyError = 'Backend must be online to load the sun and moon overlay.';
+        _astronomyError =
+            'Backend must be online to load the sun and moon overlay.';
       });
       return;
     }
@@ -966,9 +983,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _formatAstronomyTimeLabel(DateTime timestampUtc) {
     final local = timestampUtc.toLocal();
-    final hour = local.hour == 0
-        ? 12
-        : (local.hour > 12 ? local.hour - 12 : local.hour);
+    final hour =
+        local.hour == 0 ? 12 : (local.hour > 12 ? local.hour - 12 : local.hour);
     final minute = local.minute.toString().padLeft(2, '0');
     final meridiem = local.hour >= 12 ? 'PM' : 'AM';
     return '${local.month}/${local.day}/${local.year} $hour:$minute $meridiem';
@@ -977,10 +993,12 @@ class _HomeScreenState extends State<HomeScreen> {
   List<AstronomyEvent> get _eventFilterMatchedAstronomyEvents {
     return switch (_astronomyEventFilter) {
       _AstronomyEventFilter.all => _astronomyEvents,
-      _AstronomyEventFilter.solar =>
-        _astronomyEvents.where((event) => event.isSolar).toList(growable: false),
-      _AstronomyEventFilter.lunar =>
-        _astronomyEvents.where((event) => event.isLunar).toList(growable: false),
+      _AstronomyEventFilter.solar => _astronomyEvents
+          .where((event) => event.isSolar)
+          .toList(growable: false),
+      _AstronomyEventFilter.lunar => _astronomyEvents
+          .where((event) => event.isLunar)
+          .toList(growable: false),
     };
   }
 
@@ -1282,13 +1300,30 @@ class _HomeScreenState extends State<HomeScreen> {
     return '${latitude.toStringAsFixed(2)}, ${longitude.toStringAsFixed(2)}';
   }
 
-  List<PlaceMarker?> get _activeRoutePoints => _routePoints.take(_stopCount).toList();
+  List<PlaceMarker?> get _activeRoutePoints =>
+      _routePoints.take(_stopCount).toList();
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 980;
+        final isCompactScreen = constraints.maxWidth < 720;
+        final panelInset = isCompactScreen ? 8.0 : 20.0;
+        final panelTopOffset = panelInset + (isCompactScreen ? 106.0 : 64.0);
+        final panelWidth = math.min(
+          isCompactScreen
+              ? 340.0
+              : (constraints.maxWidth >= 1280 ? 420.0 : 380.0),
+          math.max(260.0, constraints.maxWidth - (panelInset * 2)),
+        );
+        final mapPadding = isCompactScreen ? 4.0 : 20.0;
+        final hudInset = isCompactScreen ? 10.0 : 20.0;
+        final overlayNotice = _pickStopIndex != null
+            ? 'Tap the map to place stop ${_pickStopIndex! + 1}.'
+            : _error ?? _measureError ?? _astronomyError;
+        final overlayNoticeIsWarning =
+            _pickStopIndex == null && overlayNotice != null;
+        final showBottomNotice = !isCompactScreen || overlayNotice != null;
 
         final intro = _IntroPanel(
           showGrid: _showGrid,
@@ -1393,7 +1428,8 @@ class _HomeScreenState extends State<HomeScreen> {
             });
             _handleMapViewScaleChanged(_mapViewScale);
           },
-          onShowSunPathChanged: (value) => _setAstronomyToggle(showSunPath: value),
+          onShowSunPathChanged: (value) =>
+              _setAstronomyToggle(showSunPath: value),
           onShowMoonPathChanged: (value) =>
               _setAstronomyToggle(showMoonPath: value),
           onAstronomyTimeModeChanged: (value) {
@@ -1456,92 +1492,237 @@ class _HomeScreenState extends State<HomeScreen> {
         );
 
         final mapCard = Card(
+          margin: EdgeInsets.zero,
           clipBehavior: Clip.antiAlias,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'North-centered flat map prototype',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF112A46),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Padding(
+                  padding: EdgeInsets.all(mapPadding),
+                  child: LayoutBuilder(
+                    builder: (context, mapConstraints) {
+                      final mapCanvas = FlatWorldCanvas(
+                        tileBaseUrl: _api.baseUrl,
+                        tileDetailLevel: _detailLevel,
+                        markers: _markers,
+                        shapes: _shapes,
+                        labels: _labels,
+                        showGrid: _showGrid,
+                        showTimeZones: _showTimeZones,
+                        useRealTimeZones: _timeZoneMode == _TimeZoneMode.real,
+                        gridStepDegrees: _gridStepDegrees,
+                        edgeRenderMode: switch (_outerEdgeMode) {
+                          _OuterEdgeMode.coastline => EdgeRenderMode.coastline,
+                          _OuterEdgeMode.country => EdgeRenderMode.country,
+                          _OuterEdgeMode.both => EdgeRenderMode.both,
+                        },
+                        showLabels: _showLabels,
+                        showShapeLabels: _showShapeLabels,
+                        showStateBoundaries: _showStateBoundaries &&
+                            _mapViewScale >= _stateBoundaryZoomThreshold,
+                        astronomySnapshot: _astronomySnapshot,
+                        showSunPath: _showSunPath,
+                        showMoonPath: _showMoonPath,
+                        astronomyObserverName: _astronomyObserver?.displayName,
+                        routePoints: _activeRoutePoints,
+                        activePickLabel: _pickStopIndex == null
+                            ? null
+                            : '${_pickStopIndex! + 1}',
+                        onMapPointPicked: _setRouteStopFromMap,
+                        onInteractionChanged: _handleMapInteractionChanged,
+                        onViewScaleChanged: _handleMapViewScaleChanged,
+                      );
+                      final mapSize = math.min(
+                        mapConstraints.maxWidth,
+                        mapConstraints.maxHeight,
+                      );
+                      return Align(
+                        alignment: Alignment.center,
+                        child: SizedBox.square(
+                          dimension: mapSize,
+                          child: mapCanvas,
+                        ),
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Version 0 renders a circular plane, uses a custom latitude-to-radius transform, and reserves the outer ring for Antarctica.',
-                  style: TextStyle(
-                    fontSize: 15,
-                    height: 1.45,
-                    color: Color(0xFF335C67),
-                  ),
+              ),
+              Positioned(
+                top: hudInset,
+                left: hudInset,
+                right: null,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF112A46),
+                        foregroundColor: const Color(0xFFF8F3E8),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isCompactScreen ? 14 : 16,
+                          vertical: isCompactScreen ? 12 : 14,
+                        ),
+                      ),
+                      onPressed: () => setState(() {
+                        _showSettingsPanel = !_showSettingsPanel;
+                      }),
+                      icon: Icon(
+                        _showSettingsPanel ? Icons.close : Icons.tune,
+                      ),
+                      label: Text(
+                        _showSettingsPanel ? 'Close settings' : 'Settings',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (isCompactScreen)
+                      _StatusRow(status: _backendStatus, compact: true)
+                    else ...[
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isCompactScreen ? 12 : 14,
+                          vertical: isCompactScreen ? 8 : 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xEAF8F3E8),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0xFFD7E0E5)),
+                        ),
+                        child: const Text(
+                          'Maybeflat map',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF112A46),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _StatusRow(status: _backendStatus),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 20),
-                Expanded(
-                  child: Center(
-                    child: FlatWorldCanvas(
-                      tileBaseUrl: _api.baseUrl,
-                      tileDetailLevel: _detailLevel,
-                      markers: _markers,
-                      shapes: _shapes,
-                      labels: _labels,
-                      showGrid: _showGrid,
-                      showTimeZones: _showTimeZones,
-                      useRealTimeZones: _timeZoneMode == _TimeZoneMode.real,
-                      gridStepDegrees: _gridStepDegrees,
-                      edgeRenderMode: switch (_outerEdgeMode) {
-                        _OuterEdgeMode.coastline => EdgeRenderMode.coastline,
-                        _OuterEdgeMode.country => EdgeRenderMode.country,
-                        _OuterEdgeMode.both => EdgeRenderMode.both,
-                      },
-                      showLabels: _showLabels,
-                      showShapeLabels: _showShapeLabels,
-                      showStateBoundaries:
-                          _showStateBoundaries &&
-                          _mapViewScale >= _stateBoundaryZoomThreshold,
-                      astronomySnapshot: _astronomySnapshot,
-                      showSunPath: _showSunPath,
-                      showMoonPath: _showMoonPath,
-                      astronomyObserverName: _astronomyObserver?.displayName,
-                      routePoints: _activeRoutePoints,
-                      activePickLabel: _pickStopIndex == null
-                          ? null
-                          : '${_pickStopIndex! + 1}',
-                      onMapPointPicked: _setRouteStopFromMap,
-                      onInteractionChanged: _handleMapInteractionChanged,
-                      onViewScaleChanged: _handleMapViewScaleChanged,
+              ),
+              if (isCompactScreen)
+                Positioned(
+                  top: hudInset,
+                  left: 0,
+                  right: 0,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xEAF8F3E8),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFD7E0E5)),
+                        ),
+                        child: const Text(
+                          'Maybeflat map',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF112A46),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              if (showBottomNotice)
+                Positioned(
+                  left: hudInset,
+                  right: hudInset,
+                  bottom: hudInset,
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isCompactScreen ? 250 : 460,
+                      ),
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isCompactScreen ? 14 : 16,
+                          vertical: isCompactScreen ? 10 : 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: overlayNoticeIsWarning
+                              ? const Color(0xF6F5E6C8)
+                              : const Color(0xEAF8F3E8),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: overlayNoticeIsWarning
+                                ? const Color(0xFFE0C38B)
+                                : const Color(0xFFD7E0E5),
+                          ),
+                        ),
+                        child: Text(
+                          overlayNotice ??
+                              'Open settings to change layers, astronomy overlays, and route tools.',
+                          style: TextStyle(
+                            fontSize: isCompactScreen ? 12 : 13,
+                            height: 1.4,
+                            color: overlayNoticeIsWarning
+                                ? const Color(0xFF7A4A17)
+                                : const Color(0xFF335C67),
+                            fontWeight: overlayNoticeIsWarning
+                                ? FontWeight.w700
+                                : FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         );
 
         return Scaffold(
           body: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: isWide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(width: 380, child: intro),
-                        const SizedBox(width: 20),
-                        Expanded(child: mapCard),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        intro,
-                        const SizedBox(height: 20),
-                        Expanded(child: mapCard),
-                      ],
+              padding: EdgeInsets.all(panelInset),
+              child: Stack(
+                children: [
+                  Positioned.fill(child: mapCard),
+                  if (_showSettingsPanel)
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _showSettingsPanel = false),
+                        child: Container(
+                          color: const Color(0x330E1C26),
+                        ),
+                      ),
                     ),
+                  Positioned(
+                    top: panelTopOffset,
+                    bottom: panelInset,
+                    left: panelInset,
+                    right: null,
+                    child: IgnorePointer(
+                      ignoring: !_showSettingsPanel,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                        offset: _showSettingsPanel
+                            ? Offset.zero
+                            : const Offset(-1.08, 0),
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 180),
+                          opacity: _showSettingsPanel ? 1 : 0,
+                          child: SizedBox(
+                            width: panelWidth,
+                            child: intro,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -1713,7 +1894,8 @@ class _IntroPanel extends StatelessWidget {
   final VoidCallback onAstronomyDateTimePressed;
   final ValueChanged<CitySearchResult?> onAstronomyObserverSelected;
   final VoidCallback onClearAstronomyObserver;
-  final ValueChanged<_AstronomyPlaybackPreset?> onAstronomyPlaybackPresetChanged;
+  final ValueChanged<_AstronomyPlaybackPreset?>
+      onAstronomyPlaybackPresetChanged;
   final ValueChanged<_AstronomyPlaybackSpeed?> onAstronomyPlaybackSpeedChanged;
   final VoidCallback onAstronomyPlaybackStartPressed;
   final VoidCallback onAstronomyPlaybackEndPressed;
@@ -1781,99 +1963,99 @@ class _IntroPanel extends StatelessWidget {
                 subtitle: 'Grid, time zones, labels, and boundaries',
                 initiallyExpanded: false,
                 children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showGrid,
-                title: const Text('Show lat/lon grid'),
-                onChanged: onShowGridChanged,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showTimeZones,
-                title: const Text('Show time zones'),
-                subtitle: const Text(
-                  'Approximate UTC wedges from longitude',
-                ),
-                onChanged: onShowTimeZonesChanged,
-              ),
-              _SelectionField(
-                labelText: 'Time-zone mode',
-                valueText: 'Approximate',
-                enabled: showTimeZones,
-                currentValue: _TimeZoneMode.approximate,
-                onChanged: onTimeZoneModeChanged,
-                options: const [
-                  _ChoiceItem(
-                    value: _TimeZoneMode.approximate,
-                    label: 'Approximate',
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showGrid,
+                    title: const Text('Show lat/lon grid'),
+                    onChanged: onShowGridChanged,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Real time zones are blocked for now. Approximate mode remains available.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF335C67),
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _SelectionField(
-                labelText: 'Grid interval',
-                valueText: '$gridStepDegrees degrees',
-                helperText: 'Multiples of 5 degrees',
-                enabled: showGrid,
-                currentValue: gridStepDegrees,
-                onChanged: onGridStepChanged,
-                options: [
-                  for (final step in _gridStepOptions)
-                    _ChoiceItem(value: step, label: '$step degrees'),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _SelectionField(
-                labelText: 'Outer edge source',
-                valueText: switch (outerEdgeMode) {
-                  _OuterEdgeMode.coastline => 'Coastline',
-                  _OuterEdgeMode.country => 'Country',
-                  _OuterEdgeMode.both => 'Both',
-                },
-                currentValue: outerEdgeMode,
-                onChanged: onOuterEdgeModeChanged,
-                options: const [
-                  _ChoiceItem(
-                    value: _OuterEdgeMode.coastline,
-                    label: 'Coastline',
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showTimeZones,
+                    title: const Text('Show time zones'),
+                    subtitle: const Text(
+                      'Approximate UTC wedges from longitude',
+                    ),
+                    onChanged: onShowTimeZonesChanged,
                   ),
-                  _ChoiceItem(
-                    value: _OuterEdgeMode.country,
-                    label: 'Country',
+                  _SelectionField(
+                    labelText: 'Time-zone mode',
+                    valueText: 'Approximate',
+                    enabled: showTimeZones,
+                    currentValue: _TimeZoneMode.approximate,
+                    onChanged: onTimeZoneModeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _TimeZoneMode.approximate,
+                        label: 'Approximate',
+                      ),
+                    ],
                   ),
-                  _ChoiceItem(value: _OuterEdgeMode.both, label: 'Both'),
-                ],
-              ),
-              const SizedBox(height: 12),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showLabels,
-                title: const Text('Show city labels'),
-                onChanged: onShowLabelsChanged,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showShapeLabels,
-                title: const Text('Show coast labels'),
-                onChanged: onShowShapeLabelsChanged,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showStateBoundaries,
-                title: const Text('Show state/province boundaries'),
-                onChanged: usingStateBoundaries
-                    ? onShowStateBoundariesChanged
-                    : null,
-              ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Real time zones are blocked for now. Approximate mode remains available.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF335C67),
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'Grid interval',
+                    valueText: '$gridStepDegrees degrees',
+                    helperText: 'Multiples of 5 degrees',
+                    enabled: showGrid,
+                    currentValue: gridStepDegrees,
+                    onChanged: onGridStepChanged,
+                    options: [
+                      for (final step in _gridStepOptions)
+                        _ChoiceItem(value: step, label: '$step degrees'),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'Outer edge source',
+                    valueText: switch (outerEdgeMode) {
+                      _OuterEdgeMode.coastline => 'Coastline',
+                      _OuterEdgeMode.country => 'Country',
+                      _OuterEdgeMode.both => 'Both',
+                    },
+                    currentValue: outerEdgeMode,
+                    onChanged: onOuterEdgeModeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _OuterEdgeMode.coastline,
+                        label: 'Coastline',
+                      ),
+                      _ChoiceItem(
+                        value: _OuterEdgeMode.country,
+                        label: 'Country',
+                      ),
+                      _ChoiceItem(value: _OuterEdgeMode.both, label: 'Both'),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showLabels,
+                    title: const Text('Show city labels'),
+                    onChanged: onShowLabelsChanged,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showShapeLabels,
+                    title: const Text('Show coast labels'),
+                    onChanged: onShowShapeLabelsChanged,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showStateBoundaries,
+                    title: const Text('Show state/province boundaries'),
+                    onChanged: usingStateBoundaries
+                        ? onShowStateBoundariesChanged
+                        : null,
+                  ),
                 ],
               ),
               const SizedBox(height: 18),
@@ -1884,363 +2066,443 @@ class _IntroPanel extends StatelessWidget {
                 subtitle: 'Sun, moon, observer, and event controls',
                 initiallyExpanded: false,
                 children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showSunPath,
-                title: const Text('Sun path'),
-                onChanged: onShowSunPathChanged,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: showMoonPath,
-                title: const Text('Moon path'),
-                onChanged: onShowMoonPathChanged,
-              ),
-              _SelectionField(
-                labelText: 'Astronomy time',
-                valueText: astronomyTimeMode == _AstronomyTimeMode.current
-                    ? 'Current time'
-                    : 'Custom time',
-                currentValue: astronomyTimeMode,
-                onChanged: onAstronomyTimeModeChanged,
-                options: const [
-                  _ChoiceItem(
-                    value: _AstronomyTimeMode.current,
-                    label: 'Current time',
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showSunPath,
+                    title: const Text('Sun path'),
+                    onChanged: onShowSunPathChanged,
                   ),
-                  _ChoiceItem(
-                    value: _AstronomyTimeMode.custom,
-                    label: 'Custom time',
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showMoonPath,
+                    title: const Text('Moon path'),
+                    onChanged: onShowMoonPathChanged,
                   ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: astronomyTimeMode == _AstronomyTimeMode.custom
-                    ? onAstronomyDateTimePressed
-                    : null,
-                child: Text(
-                  astronomyTimeMode == _AstronomyTimeMode.current
-                      ? 'Using current time'
-                      : astronomyCustomTimeLabel,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _CitySearchField(
-                label: 'Observer city',
-                controller: astronomyObserverController,
-                onSelected: onAstronomyObserverSelected,
-                searchCities: onSearchCities,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      astronomyObserverName == null
-                          ? 'Observer: none selected'
-                          : 'Observer: $astronomyObserverName',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF335C67),
-                        height: 1.35,
+                  _SelectionField(
+                    labelText: 'Astronomy time',
+                    valueText: astronomyTimeMode == _AstronomyTimeMode.current
+                        ? 'Current time'
+                        : 'Custom time',
+                    currentValue: astronomyTimeMode,
+                    onChanged: onAstronomyTimeModeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _AstronomyTimeMode.current,
+                        label: 'Current time',
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  OutlinedButton(
-                    onPressed: astronomyObserverName == null
-                        ? null
-                        : onClearAstronomyObserver,
-                    child: const Text('Clear'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Sun/Moon playback',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 10),
-              _SelectionField(
-                labelText: 'Range',
-                valueText: _formatPlaybackPresetLabel(astronomyPlaybackPreset),
-                currentValue: astronomyPlaybackPreset,
-                onChanged: onAstronomyPlaybackPresetChanged,
-                options: [
-                  for (final preset in _AstronomyPlaybackPreset.values)
-                    _ChoiceItem(
-                      value: preset,
-                      label: _formatPlaybackPresetLabel(preset),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _SelectionField(
-                labelText: 'Playback speed',
-                valueText: _formatPlaybackSpeedLabel(astronomyPlaybackSpeed),
-                currentValue: astronomyPlaybackSpeed,
-                onChanged: onAstronomyPlaybackSpeedChanged,
-                options: [
-                  for (final speed in _AstronomyPlaybackSpeed.values)
-                    _ChoiceItem(
-                      value: speed,
-                      label: _formatPlaybackSpeedLabel(speed),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onAstronomyPlaybackStartPressed,
-                      child: Text('Start: $astronomyPlaybackStartLabel'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onAstronomyPlaybackEndPressed,
-                      child: Text('End: $astronomyPlaybackEndLabel'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Scrub time: $astronomyPlaybackCurrentLabel',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF335C67),
-                      height: 1.35,
-                    ),
-                  ),
-                  Slider(
-                    value: astronomyPlaybackProgress,
-                    onChanged: onAstronomyPlaybackProgressChanged,
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF112A46),
-                        foregroundColor: const Color(0xFFF8F3E8),
+                      _ChoiceItem(
+                        value: _AstronomyTimeMode.custom,
+                        label: 'Custom time',
                       ),
-                      onPressed: onAstronomyPlaybackToggle,
-                      child: Text(isAstronomyPlaying ? 'Pause' : 'Play'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: isAstronomyPlaying ||
-                              astronomyPlaybackProgress > 0
-                          ? onAstronomyPlaybackStop
-                          : null,
-                      child: const Text('Stop'),
-                    ),
-                  ),
-                ],
-              ),
-              if (isLoadingAstronomy) ...[
-                const SizedBox(height: 10),
-                const Text(
-                  'Loading live astronomy...',
-                  style: TextStyle(
-                    color: Color(0xFF335C67),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              if (astronomySnapshot != null) ...[
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE7EFF5),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Snapshot: ${_formatSnapshotTime(astronomySnapshot!)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF112A46),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Moon phase: ${astronomySnapshot!.moon.phaseName ?? 'Unavailable'}'
-                        ' (${_formatIllumination(astronomySnapshot!.moon.illuminationFraction)})',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF335C67),
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Sun over: ${_formatBodySummary(astronomySnapshot!.sun.subpoint)}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF335C67),
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Moon over: ${_formatBodySummary(astronomySnapshot!.moon.subpoint)}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF335C67),
-                          height: 1.35,
-                        ),
-                      ),
-                      if (astronomySnapshot!.observer != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          _formatObserverSummary(astronomySnapshot!.observer!),
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF112A46),
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
-                ),
-              ],
-              const SizedBox(height: 14),
-              const Text(
-                'Upcoming events',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Event filter',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 8),
-              _SelectionField(
-                labelText: 'Event Filter',
-                valueText: switch (astronomyEventFilter) {
-                  _AstronomyEventFilter.all => 'All eclipses',
-                  _AstronomyEventFilter.solar => 'Solar eclipses',
-                  _AstronomyEventFilter.lunar => 'Lunar eclipses',
-                },
-                currentValue: astronomyEventFilter,
-                onChanged: onAstronomyEventFilterChanged,
-                options: const [
-                  _ChoiceItem(
-                    value: _AstronomyEventFilter.all,
-                    label: 'All eclipses',
-                  ),
-                  _ChoiceItem(
-                    value: _AstronomyEventFilter.solar,
-                    label: 'Solar eclipses',
-                  ),
-                  _ChoiceItem(
-                    value: _AstronomyEventFilter.lunar,
-                    label: 'Lunar eclipses',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _SelectionField(
-                labelText: 'Eclipse Type',
-                valueText: _formatEclipseSubtypeOption(astronomyEclipseSubtype),
-                currentValue: astronomyEclipseSubtype,
-                onChanged: onAstronomyEclipseSubtypeChanged,
-                options: [
-                  for (final subtype in astronomyEclipseSubtypeOptions)
-                    _ChoiceItem(
-                      value: subtype,
-                      label: _formatEclipseSubtypeOption(subtype),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: astronomyTimeMode == _AstronomyTimeMode.custom
+                        ? onAstronomyDateTimePressed
+                        : null,
+                    child: Text(
+                      astronomyTimeMode == _AstronomyTimeMode.current
+                          ? 'Using current time'
+                          : astronomyCustomTimeLabel,
                     ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: astronomyEvents.isEmpty ? null : onToggleAstronomyEventPicker,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
                   ),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFFBFCBD5)),
-                    borderRadius: BorderRadius.circular(4),
+                  const SizedBox(height: 12),
+                  _CitySearchField(
+                    label: 'Observer city',
+                    controller: astronomyObserverController,
+                    onSelected: onAstronomyObserverSelected,
+                    searchCities: onSearchCities,
                   ),
-                  child: astronomyEvents.isEmpty
-                      ? const Text(
-                          'No events available for this filter.',
-                          style: TextStyle(
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          astronomyObserverName == null
+                              ? 'Observer: none selected'
+                              : 'Observer: $astronomyObserverName',
+                          style: const TextStyle(
                             fontSize: 13,
                             color: Color(0xFF335C67),
                             height: 1.35,
                           ),
-                        )
-                      : Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: selectedAstronomyEvent == null
-                                  ? const Text(
-                                      'Select event',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: Color(0xFF335C67),
-                                        height: 1.35,
-                                      ),
-                                    )
-                                  : Column(
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton(
+                        onPressed: astronomyObserverName == null
+                            ? null
+                            : onClearAstronomyObserver,
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Sun/Moon playback',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _SelectionField(
+                    labelText: 'Range',
+                    valueText:
+                        _formatPlaybackPresetLabel(astronomyPlaybackPreset),
+                    currentValue: astronomyPlaybackPreset,
+                    onChanged: onAstronomyPlaybackPresetChanged,
+                    options: [
+                      for (final preset in _AstronomyPlaybackPreset.values)
+                        _ChoiceItem(
+                          value: preset,
+                          label: _formatPlaybackPresetLabel(preset),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _SelectionField(
+                    labelText: 'Playback speed',
+                    valueText:
+                        _formatPlaybackSpeedLabel(astronomyPlaybackSpeed),
+                    currentValue: astronomyPlaybackSpeed,
+                    onChanged: onAstronomyPlaybackSpeedChanged,
+                    options: [
+                      for (final speed in _AstronomyPlaybackSpeed.values)
+                        _ChoiceItem(
+                          value: speed,
+                          label: _formatPlaybackSpeedLabel(speed),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: onAstronomyPlaybackStartPressed,
+                          child: Text('Start: $astronomyPlaybackStartLabel'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: onAstronomyPlaybackEndPressed,
+                          child: Text('End: $astronomyPlaybackEndLabel'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Scrub time: $astronomyPlaybackCurrentLabel',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF335C67),
+                          height: 1.35,
+                        ),
+                      ),
+                      Slider(
+                        value: astronomyPlaybackProgress,
+                        onChanged: onAstronomyPlaybackProgressChanged,
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF112A46),
+                            foregroundColor: const Color(0xFFF8F3E8),
+                          ),
+                          onPressed: onAstronomyPlaybackToggle,
+                          child: Text(isAstronomyPlaying ? 'Pause' : 'Play'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: isAstronomyPlaying ||
+                                  astronomyPlaybackProgress > 0
+                              ? onAstronomyPlaybackStop
+                              : null,
+                          child: const Text('Stop'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (isLoadingAstronomy) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Loading live astronomy...',
+                      style: TextStyle(
+                        color: Color(0xFF335C67),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (astronomySnapshot != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE7EFF5),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Snapshot: ${_formatSnapshotTime(astronomySnapshot!)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF112A46),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Moon phase: ${astronomySnapshot!.moon.phaseName ?? 'Unavailable'}'
+                            ' (${_formatIllumination(astronomySnapshot!.moon.illuminationFraction)})',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Sun over: ${_formatBodySummary(astronomySnapshot!.sun.subpoint)}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Moon over: ${_formatBodySummary(astronomySnapshot!.moon.subpoint)}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          if (astronomySnapshot!.observer != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _formatObserverSummary(
+                                  astronomySnapshot!.observer!),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF112A46),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Upcoming events',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Event filter',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _SelectionField(
+                    labelText: 'Event Filter',
+                    valueText: switch (astronomyEventFilter) {
+                      _AstronomyEventFilter.all => 'All eclipses',
+                      _AstronomyEventFilter.solar => 'Solar eclipses',
+                      _AstronomyEventFilter.lunar => 'Lunar eclipses',
+                    },
+                    currentValue: astronomyEventFilter,
+                    onChanged: onAstronomyEventFilterChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _AstronomyEventFilter.all,
+                        label: 'All eclipses',
+                      ),
+                      _ChoiceItem(
+                        value: _AstronomyEventFilter.solar,
+                        label: 'Solar eclipses',
+                      ),
+                      _ChoiceItem(
+                        value: _AstronomyEventFilter.lunar,
+                        label: 'Lunar eclipses',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _SelectionField(
+                    labelText: 'Eclipse Type',
+                    valueText:
+                        _formatEclipseSubtypeOption(astronomyEclipseSubtype),
+                    currentValue: astronomyEclipseSubtype,
+                    onChanged: onAstronomyEclipseSubtypeChanged,
+                    options: [
+                      for (final subtype in astronomyEclipseSubtypeOptions)
+                        _ChoiceItem(
+                          value: subtype,
+                          label: _formatEclipseSubtypeOption(subtype),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: astronomyEvents.isEmpty
+                        ? null
+                        : onToggleAstronomyEventPicker,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: const Color(0xFFBFCBD5)),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: astronomyEvents.isEmpty
+                          ? const Text(
+                              'No events available for this filter.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            )
+                          : Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: selectedAstronomyEvent == null
+                                      ? const Text(
+                                          'Select event',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Color(0xFF335C67),
+                                            height: 1.35,
+                                          ),
+                                        )
+                                      : Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              selectedAstronomyEvent!.title,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w800,
+                                                color: Color(0xFF112A46),
+                                                height: 1.3,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              _formatEventTime(
+                                                selectedAstronomyEvent!,
+                                              ),
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Color(0xFF335C67),
+                                                height: 1.3,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                ),
+                                const SizedBox(width: 12),
+                                Icon(
+                                  showAstronomyEventPicker
+                                      ? Icons.expand_less
+                                      : Icons.expand_more,
+                                  color: const Color(0xFF335C67),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  if (showAstronomyEventPicker &&
+                      astronomyEvents.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: const Color(0xFFB6C7D1)),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: SizedBox(
+                        height: 184,
+                        child: Scrollbar(
+                          controller: astronomyEventScrollController,
+                          thumbVisibility: true,
+                          child: ListView.separated(
+                            controller: astronomyEventScrollController,
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            itemCount: astronomyEvents.length,
+                            separatorBuilder: (context, index) => const Divider(
+                              height: 1,
+                              color: Color(0xFFD7E0E5),
+                            ),
+                            itemBuilder: (context, index) {
+                              final event = astronomyEvents[index];
+                              final isSelected =
+                                  selectedAstronomyEvent?.id == event.id;
+                              return Material(
+                                color: isSelected
+                                    ? const Color(0xFFE7EFF5)
+                                    : Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => onAstronomyEventSelected(event),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    child: Column(
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          selectedAstronomyEvent!.title,
-                                          style: const TextStyle(
+                                          event.title,
+                                          style: TextStyle(
                                             fontSize: 13,
-                                            fontWeight: FontWeight.w800,
-                                            color: Color(0xFF112A46),
+                                            fontWeight: isSelected
+                                                ? FontWeight.w800
+                                                : FontWeight.w700,
+                                            color: const Color(0xFF112A46),
                                             height: 1.3,
                                           ),
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          _formatEventTime(
-                                            selectedAstronomyEvent!,
-                                          ),
+                                          _formatEventTime(event),
                                           style: const TextStyle(
                                             fontSize: 12,
                                             color: Color(0xFF335C67),
@@ -2249,164 +2511,93 @@ class _IntroPanel extends StatelessWidget {
                                         ),
                                       ],
                                     ),
-                            ),
-                            const SizedBox(width: 12),
-                            Icon(
-                              showAstronomyEventPicker
-                                  ? Icons.expand_less
-                                  : Icons.expand_more,
-                              color: const Color(0xFF335C67),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-              if (showAstronomyEventPicker && astronomyEvents.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFFB6C7D1)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: SizedBox(
-                    height: 184,
-                    child: Scrollbar(
-                      controller: astronomyEventScrollController,
-                      thumbVisibility: true,
-                      child: ListView.separated(
-                        controller: astronomyEventScrollController,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        itemCount: astronomyEvents.length,
-                        separatorBuilder: (context, index) => const Divider(
-                          height: 1,
-                          color: Color(0xFFD7E0E5),
-                        ),
-                        itemBuilder: (context, index) {
-                          final event = astronomyEvents[index];
-                          final isSelected =
-                              selectedAstronomyEvent?.id == event.id;
-                          return Material(
-                            color: isSelected
-                                ? const Color(0xFFE7EFF5)
-                                : Colors.transparent,
-                            child: InkWell(
-                              onTap: () => onAstronomyEventSelected(event),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
+                                  ),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      event.title,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: isSelected
-                                            ? FontWeight.w800
-                                            : FontWeight.w700,
-                                        color: const Color(0xFF112A46),
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _formatEventTime(event),
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xFF335C67),
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
+                              );
+                            },
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF112A46),
-                        foregroundColor: const Color(0xFFF8F3E8),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF112A46),
+                            foregroundColor: const Color(0xFFF8F3E8),
+                          ),
+                          onPressed: astronomyEvents.isEmpty
+                              ? null
+                              : onPreviousAstronomyEvent,
+                          child: const Text(
+                            'Previous',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
-                      onPressed: astronomyEvents.isEmpty
-                          ? null
-                          : onPreviousAstronomyEvent,
-                      child: const Text(
-                        'Previous',
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF112A46),
+                            foregroundColor: const Color(0xFFF8F3E8),
+                          ),
+                          onPressed: astronomyEvents.isEmpty
+                              ? null
+                              : onNextAstronomyEvent,
+                          child: const Text(
+                            'Next',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (isLoadingAstronomyEvents) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Loading event calendar...',
+                      style: TextStyle(
+                        color: Color(0xFF335C67),
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF112A46),
-                        foregroundColor: const Color(0xFFF8F3E8),
-                      ),
-                      onPressed:
-                          astronomyEvents.isEmpty ? null : onNextAstronomyEvent,
-                      child: const Text(
-                        'Next',
-                        overflow: TextOverflow.ellipsis,
+                  ],
+                  if (selectedAstronomyEvent != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '${selectedAstronomyEvent!.title} - ${_formatEventSubtype(selectedAstronomyEvent!)}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF112A46),
+                        height: 1.35,
                       ),
                     ),
-                  ),
-                ],
-              ),
-              if (isLoadingAstronomyEvents) ...[
-                const SizedBox(height: 10),
-                const Text(
-                  'Loading event calendar...',
-                  style: TextStyle(
-                    color: Color(0xFF335C67),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              if (selectedAstronomyEvent != null) ...[
-                const SizedBox(height: 10),
-                Text(
-                  '${selectedAstronomyEvent!.title} - ${_formatEventSubtype(selectedAstronomyEvent!)}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF112A46),
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _formatEventTime(selectedAstronomyEvent!),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF335C67),
-                    height: 1.35,
-                  ),
-                ),
-                if (selectedAstronomyEvent!.description != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    selectedAstronomyEvent!.description!,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF335C67),
-                      height: 1.35,
+                    const SizedBox(height: 4),
+                    Text(
+                      _formatEventTime(selectedAstronomyEvent!),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF335C67),
+                        height: 1.35,
+                      ),
                     ),
-                  ),
-                ],
-              ],
+                    if (selectedAstronomyEvent!.description != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        selectedAstronomyEvent!.description!,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF335C67),
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
                 ],
               ),
               const SizedBox(height: 12),
@@ -2415,77 +2606,79 @@ class _IntroPanel extends StatelessWidget {
                 subtitle: 'Backend reload and source details',
                 initiallyExpanded: false,
                 children: [
-              FilledButton(
-                onPressed: isLoading ? null : () => onReload(),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF112A46),
-                  foregroundColor: const Color(0xFFF8F3E8),
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                child: Text(
-                  isLoading ? 'Loading backend scene...' : 'Reload backend scene',
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Backend markers loaded: $markerCount',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Vector layers loaded: $shapeCount',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                usingRealCoastlines
-                    ? 'Coastline source: $shapeSource'
-                    : 'Coastline source: prototype shapes',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                usingCountryBoundaries
-                    ? 'Country boundaries: $boundarySource'
-                    : 'Country boundaries: unavailable',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                usingStateBoundaries
-                    ? 'State/province boundaries: $stateBoundarySource'
-                    : 'State/province boundaries: unavailable',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Coastline detail: $detailLevel',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF112A46),
-                ),
-              ),
+                  FilledButton(
+                    onPressed: isLoading ? null : () => onReload(),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF112A46),
+                      foregroundColor: const Color(0xFFF8F3E8),
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    child: Text(
+                      isLoading
+                          ? 'Loading backend scene...'
+                          : 'Reload backend scene',
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Backend markers loaded: $markerCount',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Vector layers loaded: $shapeCount',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    usingRealCoastlines
+                        ? 'Coastline source: $shapeSource'
+                        : 'Coastline source: prototype shapes',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    usingCountryBoundaries
+                        ? 'Country boundaries: $boundarySource'
+                        : 'Country boundaries: unavailable',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    usingStateBoundaries
+                        ? 'State/province boundaries: $stateBoundarySource'
+                        : 'State/province boundaries: unavailable',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Coastline detail: $detailLevel',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 18),
@@ -2496,125 +2689,57 @@ class _IntroPanel extends StatelessWidget {
                 subtitle: 'Cities, map picks, and ordered route distance',
                 initiallyExpanded: false,
                 children: [
-              _SelectionField(
-                labelText: 'Distance units',
-                valueText: switch (distanceUnitDisplay) {
-                  _DistanceUnitDisplay.both => 'Both',
-                  _DistanceUnitDisplay.kilometers => 'Kilometers',
-                  _DistanceUnitDisplay.miles => 'Miles',
-                },
-                currentValue: distanceUnitDisplay,
-                onChanged: onDistanceUnitDisplayChanged,
-                options: const [
-                  _ChoiceItem(
-                    value: _DistanceUnitDisplay.both,
-                    label: 'Both',
-                  ),
-                  _ChoiceItem(
-                    value: _DistanceUnitDisplay.kilometers,
-                    label: 'Kilometers',
-                  ),
-                  _ChoiceItem(
-                    value: _DistanceUnitDisplay.miles,
-                    label: 'Miles',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _SelectionField(
-                labelText: 'How many stops',
-                valueText: '$stopCount stops',
-                currentValue: stopCount,
-                onChanged: onStopCountChanged,
-                options: [
-                  for (var count = _minRouteStops;
-                      count <= _maxRouteStops;
-                      count += 1)
-                    _ChoiceItem(value: count, label: '$count stops'),
-                ],
-              ),
-              const SizedBox(height: 16),
-              for (var index = 0; index < stopCount; index += 1) ...[
-                _CitySearchField(
-                  label: 'Stop ${index + 1} city',
-                  controller: stopControllers[index],
-                  searchCities: onSearchCities,
-                  onSelected: (entry) => onStopCitySelected(entry, index),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Selected: ${stopSources[index] ?? 'Not set'}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF335C67),
-                          height: 1.35,
-                        ),
+                  _SelectionField(
+                    labelText: 'Distance units',
+                    valueText: switch (distanceUnitDisplay) {
+                      _DistanceUnitDisplay.both => 'Both',
+                      _DistanceUnitDisplay.kilometers => 'Kilometers',
+                      _DistanceUnitDisplay.miles => 'Miles',
+                    },
+                    currentValue: distanceUnitDisplay,
+                    onChanged: onDistanceUnitDisplayChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _DistanceUnitDisplay.both,
+                        label: 'Both',
                       ),
+                      _ChoiceItem(
+                        value: _DistanceUnitDisplay.kilometers,
+                        label: 'Kilometers',
+                      ),
+                      _ChoiceItem(
+                        value: _DistanceUnitDisplay.miles,
+                        label: 'Miles',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'How many stops',
+                    valueText: '$stopCount stops',
+                    currentValue: stopCount,
+                    onChanged: onStopCountChanged,
+                    options: [
+                      for (var count = _minRouteStops;
+                          count <= _maxRouteStops;
+                          count += 1)
+                        _ChoiceItem(value: count, label: '$count stops'),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  for (var index = 0; index < stopCount; index += 1) ...[
+                    _CitySearchField(
+                      label: 'Stop ${index + 1} city',
+                      controller: stopControllers[index],
+                      searchCities: onSearchCities,
+                      onSelected: (entry) => onStopCitySelected(entry, index),
                     ),
-                    const SizedBox(width: 10),
-                    OutlinedButton(
-                      onPressed: () => onPickStop(index),
-                      child: Text(
-                        activePickStopIndex == index
-                            ? 'Picking...'
-                            : 'Pick on map',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
-              OutlinedButton(
-                onPressed: onClearRoute,
-                child: const Text('Clear route'),
-              ),
-              if (isMeasuring) ...[
-                const SizedBox(height: 10),
-                const Text(
-                  'Measuring route...',
-                  style: TextStyle(
-                    color: Color(0xFF335C67),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              if (_routeReady(stopSources, stopCount) && routeLegs.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF6ECD2),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _totalDistanceSummary(routeLegs, distanceUnitDisplay),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF112A46),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Leg breakdown',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF335C67),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      for (var index = 0; index < routeLegs.length; index += 1)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
                           child: Text(
-                            '${index + 1}. ${stopSources[index] ?? 'Stop ${index + 1}'} -> ${stopSources[index + 1] ?? 'Stop ${index + 2}'}: ${_legDistanceSummary(routeLegs[index], distanceUnitDisplay)}',
+                            'Selected: ${stopSources[index] ?? 'Not set'}',
                             style: const TextStyle(
                               fontSize: 13,
                               color: Color(0xFF335C67),
@@ -2622,37 +2747,109 @@ class _IntroPanel extends StatelessWidget {
                             ),
                           ),
                         ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Raw plane total: ${_rawPlaneTotal(routeLegs)} map units',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF5C6B73),
+                        const SizedBox(width: 10),
+                        OutlinedButton(
+                          onPressed: () => onPickStop(index),
+                          child: Text(
+                            activePickStopIndex == index
+                                ? 'Picking...'
+                                : 'Pick on map',
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        routeLegs.first.distanceReferenceNote,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF5C6B73),
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  OutlinedButton(
+                    onPressed: onClearRoute,
+                    child: const Text('Clear route'),
                   ),
-                ),
-              ] else ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Set all $stopCount stops to measure the full route.',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF335C67),
-                    height: 1.35,
-                  ),
-                ),
-              ],
+                  if (isMeasuring) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Measuring route...',
+                      style: TextStyle(
+                        color: Color(0xFF335C67),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (_routeReady(stopSources, stopCount) &&
+                      routeLegs.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF6ECD2),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _totalDistanceSummary(
+                                routeLegs, distanceUnitDisplay),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF112A46),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Leg breakdown',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF335C67),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          for (var index = 0;
+                              index < routeLegs.length;
+                              index += 1)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Text(
+                                '${index + 1}. ${stopSources[index] ?? 'Stop ${index + 1}'} -> ${stopSources[index + 1] ?? 'Stop ${index + 2}'}: ${_legDistanceSummary(routeLegs[index], distanceUnitDisplay)}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF335C67),
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Raw plane total: ${_rawPlaneTotal(routeLegs)} map units',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF5C6B73),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            routeLegs.first.distanceReferenceNote,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF5C6B73),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Set all $stopCount stops to measure the full route.',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF335C67),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ],
               ),
               if (error != null) ...[
@@ -2777,7 +2974,8 @@ class _IntroPanel extends StatelessWidget {
 
   String _formatObserverSummary(AstronomyObserver observer) {
     final daylightLabel = observer.isDaylight ? 'daylight' : 'night';
-    final moonLabel = observer.isMoonVisible ? 'Moon above horizon' : 'Moon below horizon';
+    final moonLabel =
+        observer.isMoonVisible ? 'Moon above horizon' : 'Moon below horizon';
     return '${observer.name ?? 'Observer'}: $daylightLabel, sun ${observer.sunAltitudeDegrees.toStringAsFixed(1)} deg, moon ${observer.moonAltitudeDegrees.toStringAsFixed(1)} deg, $moonLabel.';
   }
 
@@ -2831,9 +3029,8 @@ class _IntroPanel extends StatelessWidget {
     final local = event.timestampUtc.toLocal();
     final minute = local.minute.toString().padLeft(2, '0');
     final meridiem = local.hour >= 12 ? 'PM' : 'AM';
-    final hour = local.hour == 0
-        ? 12
-        : (local.hour > 12 ? local.hour - 12 : local.hour);
+    final hour =
+        local.hour == 0 ? 12 : (local.hour > 12 ? local.hour - 12 : local.hour);
     return '${local.month}/${local.day}/${local.year} $hour:$minute $meridiem';
   }
 }
@@ -2977,12 +3174,10 @@ class _SelectionFieldState<T> extends State<_SelectionField<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = widget.enabled
-        ? const Color(0xFFBFCBD5)
-        : const Color(0xFFD7E0E5);
-    final textColor = widget.enabled
-        ? const Color(0xFF112A46)
-        : const Color(0xFF7B8B94);
+    final borderColor =
+        widget.enabled ? const Color(0xFFBFCBD5) : const Color(0xFFD7E0E5);
+    final textColor =
+        widget.enabled ? const Color(0xFF112A46) : const Color(0xFF7B8B94);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3050,9 +3245,8 @@ class _SelectionFieldState<T> extends State<_SelectionField<T>> {
                   return ListTile(
                     dense: true,
                     title: Text(option.label),
-                    subtitle: option.subtitle == null
-                        ? null
-                        : Text(option.subtitle!),
+                    subtitle:
+                        option.subtitle == null ? null : Text(option.subtitle!),
                     trailing: isSelected
                         ? const Icon(Icons.check, color: Color(0xFF112A46))
                         : null,
@@ -3149,7 +3343,8 @@ class _CitySearchFieldState extends State<_CitySearchField> {
 
   @override
   Widget build(BuildContext context) {
-    final showResults = _focusNode.hasFocus && (_isLoading || _results.isNotEmpty);
+    final showResults =
+        _focusNode.hasFocus && (_isLoading || _results.isNotEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3225,9 +3420,11 @@ class _CitySearchFieldState extends State<_CitySearchField> {
 class _StatusRow extends StatelessWidget {
   const _StatusRow({
     required this.status,
+    this.compact = false,
   });
 
   final _BackendStatus status;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -3253,7 +3450,10 @@ class _StatusRow extends StatelessWidget {
     };
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 14,
+        vertical: compact ? 7 : 10,
+      ),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(999),
@@ -3262,8 +3462,8 @@ class _StatusRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 10,
-            height: 10,
+            width: compact ? 8 : 10,
+            height: compact ? 8 : 10,
             decoration: BoxDecoration(
               color: dotColor,
               shape: BoxShape.circle,
@@ -3272,9 +3472,10 @@ class _StatusRow extends StatelessWidget {
           const SizedBox(width: 10),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w800,
-              color: Color(0xFF112A46),
+              fontSize: compact ? 13 : 14,
+              color: const Color(0xFF112A46),
             ),
           ),
         ],

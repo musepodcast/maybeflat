@@ -17,14 +17,22 @@ class MaybeflatApi {
     this.sceneTimeout = const Duration(seconds: 20),
     this.actionTimeout = const Duration(seconds: 10),
     http.Client? client,
-  }) : baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
-       _client = client ?? http.Client();
+  })  : _baseUrlIsExplicit = (baseUrl != null && baseUrl.trim().isNotEmpty) ||
+            const String.fromEnvironment(
+              'MAYBEFLAT_API_BASE_URL',
+              defaultValue: '',
+            ).isNotEmpty,
+        baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
+        _client = client ?? http.Client();
 
   final String baseUrl;
   final Duration healthTimeout;
   final Duration sceneTimeout;
   final Duration actionTimeout;
   final http.Client _client;
+  final bool _baseUrlIsExplicit;
+  String? _resolvedBaseUrl;
+  Future<String>? _baseUrlResolution;
 
   static String _defaultBaseUrl() {
     const configuredBaseUrl = String.fromEnvironment(
@@ -63,11 +71,22 @@ class MaybeflatApi {
     return resolved.replace(path: normalizedPath).toString();
   }
 
-  Future<bool> checkHealth() async {
+  static List<String> _defaultCandidateBaseUrls() {
+    return const [
+      'http://127.0.0.1:8002',
+      'http://10.0.2.2:8002',
+      'http://10.0.3.2:8002',
+    ];
+  }
+
+  Future<bool> _checkHealthAt(
+    String candidateBaseUrl, {
+    Duration? timeout,
+  }) async {
     try {
       final response = await _client
-          .get(Uri.parse('$baseUrl/health'))
-          .timeout(healthTimeout);
+          .get(Uri.parse('$candidateBaseUrl/health'))
+          .timeout(timeout ?? healthTimeout);
       if (response.statusCode != 200) {
         return false;
       }
@@ -79,17 +98,87 @@ class MaybeflatApi {
     }
   }
 
+  Future<String> _resolveDefaultBaseUrl() async {
+    const probeTimeout = Duration(seconds: 2);
+    for (final candidateBaseUrl in _defaultCandidateBaseUrls()) {
+      final isHealthy = await _checkHealthAt(
+        candidateBaseUrl,
+        timeout: probeTimeout,
+      );
+      if (isHealthy) {
+        _resolvedBaseUrl = candidateBaseUrl;
+        return candidateBaseUrl;
+      }
+    }
+
+    _resolvedBaseUrl = baseUrl;
+    return baseUrl;
+  }
+
+  Future<String> _effectiveBaseUrl() async {
+    if (_baseUrlIsExplicit || kIsWeb) {
+      return baseUrl;
+    }
+
+    if (_resolvedBaseUrl != null) {
+      return _resolvedBaseUrl!;
+    }
+
+    final pendingResolution = _baseUrlResolution;
+    if (pendingResolution != null) {
+      return pendingResolution;
+    }
+
+    final nextResolution = _resolveDefaultBaseUrl();
+    _baseUrlResolution = nextResolution;
+    try {
+      return await nextResolution;
+    } finally {
+      if (identical(_baseUrlResolution, nextResolution)) {
+        _baseUrlResolution = null;
+      }
+    }
+  }
+
+  Future<Uri> _buildUri(
+    String path, {
+    Map<String, String>? queryParameters,
+  }) async {
+    final activeBaseUrl = await _effectiveBaseUrl();
+    return Uri.parse('$activeBaseUrl$path').replace(
+      queryParameters: queryParameters,
+    );
+  }
+
+  Future<bool> checkHealth() async {
+    if (_baseUrlIsExplicit || kIsWeb) {
+      return _checkHealthAt(baseUrl);
+    }
+
+    for (final candidateBaseUrl in _defaultCandidateBaseUrls()) {
+      final isHealthy = await _checkHealthAt(candidateBaseUrl);
+      if (isHealthy) {
+        _resolvedBaseUrl = candidateBaseUrl;
+        return true;
+      }
+    }
+
+    _resolvedBaseUrl = baseUrl;
+    return false;
+  }
+
   Future<MapScene> loadScene({
     String detail = 'desktop',
     bool includeStateBoundaries = false,
   }) async {
-    final response = await _client
-        .get(
-          Uri.parse(
-            '$baseUrl/map/scene?detail=$detail&include_state_boundaries=$includeStateBoundaries',
-          ),
-        )
-        .timeout(sceneTimeout);
+    final uri = await _buildUri(
+      '/map/scene',
+      queryParameters: {
+        'detail': detail,
+        'include_state_boundaries': '$includeStateBoundaries',
+      },
+    );
+    final response = await _client.get(uri).timeout(sceneTimeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to load scene: ${response.statusCode}');
     }
@@ -102,9 +191,10 @@ class MaybeflatApi {
     required double latitude,
     required double longitude,
   }) async {
+    final uri = await _buildUri('/map/transform');
     final response = await _client
         .post(
-          Uri.parse('$baseUrl/map/transform'),
+          uri,
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'name': name,
@@ -129,9 +219,10 @@ class MaybeflatApi {
     required double endLatitude,
     required double endLongitude,
   }) async {
+    final uri = await _buildUri('/map/measure');
     final response = await _client
         .post(
-          Uri.parse('$baseUrl/map/measure'),
+          uri,
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'start_latitude': startLatitude,
@@ -174,12 +265,14 @@ class MaybeflatApi {
       }
     }
 
-    final uri = Uri.parse('$baseUrl/map/astronomy').replace(
+    final uri = await _buildUri(
+      '/map/astronomy',
       queryParameters: queryParameters,
     );
     final response = await _client.get(uri).timeout(sceneTimeout);
     if (response.statusCode != 200) {
-      throw Exception('Failed to load astronomy snapshot: ${response.statusCode}');
+      throw Exception(
+          'Failed to load astronomy snapshot: ${response.statusCode}');
     }
 
     return AstronomySnapshot.fromJson(
@@ -205,12 +298,14 @@ class MaybeflatApi {
           fromTimestampUtc.toUtc().toIso8601String();
     }
 
-    final uri = Uri.parse('$baseUrl/map/events').replace(
+    final uri = await _buildUri(
+      '/map/events',
       queryParameters: queryParameters,
     );
     final response = await _client.get(uri).timeout(sceneTimeout);
     if (response.statusCode != 200) {
-      throw Exception('Failed to load astronomy events: ${response.statusCode}');
+      throw Exception(
+          'Failed to load astronomy events: ${response.statusCode}');
     }
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
@@ -223,7 +318,8 @@ class MaybeflatApi {
     required String query,
     int limit = 12,
   }) async {
-    final uri = Uri.parse('$baseUrl/map/cities/search').replace(
+    final uri = await _buildUri(
+      '/map/cities/search',
       queryParameters: {
         'q': query,
         'limit': '$limit',

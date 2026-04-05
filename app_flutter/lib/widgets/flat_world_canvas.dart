@@ -121,7 +121,10 @@ bool _isMajorLatitude(double latitude, int stepDegrees) {
 }
 
 bool _isMajorLongitude(int longitude, int stepDegrees) {
-  if (longitude == -180 || longitude == -90 || longitude == 0 || longitude == 90) {
+  if (longitude == -180 ||
+      longitude == -90 ||
+      longitude == 0 ||
+      longitude == 90) {
     return true;
   }
   return longitude % _gridLabelInterval(stepDegrees) == 0;
@@ -141,8 +144,7 @@ double _gridLongitudeLabelFontSize(int stepDegrees, double viewScale) {
     <= 30 => 10.0,
     _ => 10.6,
   };
-  final scaledBase =
-      densityBase / math.pow(viewScale.clamp(1.0, 8.0), 0.26);
+  final scaledBase = densityBase / math.pow(viewScale.clamp(1.0, 8.0), 0.26);
   return scaledBase.clamp(6.2, 10.6).toDouble();
 }
 
@@ -155,8 +157,7 @@ double _gridLatitudeLabelFontSize(int stepDegrees, double viewScale) {
     <= 30 => 11.4,
     _ => 12.0,
   };
-  final scaledBase =
-      densityBase / math.pow(viewScale.clamp(1.0, 8.0), 0.18);
+  final scaledBase = densityBase / math.pow(viewScale.clamp(1.0, 8.0), 0.18);
   return scaledBase.clamp(7.8, 12.0).toDouble();
 }
 
@@ -181,20 +182,17 @@ double _layerLabelFontSize(String layer, double viewScale) {
     'city_local' => 6.2,
     _ => 7.0,
   };
-  final scaledSize =
-      baseSize / math.pow(viewScale.clamp(1.0, 24.0), 0.18);
+  final scaledSize = baseSize / math.pow(viewScale.clamp(1.0, 24.0), 0.18);
   return scaledSize.clamp(minSize, baseSize).toDouble();
 }
 
 double _markerLabelFontSize(double viewScale) {
-  final scaledSize =
-      12 / math.pow(viewScale.clamp(1.0, 24.0), 0.16);
+  final scaledSize = 12 / math.pow(viewScale.clamp(1.0, 24.0), 0.16);
   return scaledSize.clamp(7.2, 12.0).toDouble();
 }
 
 double _shapeLabelFontSize(double viewScale) {
-  final scaledSize =
-      12 / math.pow(viewScale.clamp(1.0, 24.0), 0.16);
+  final scaledSize = 12 / math.pow(viewScale.clamp(1.0, 24.0), 0.16);
   return scaledSize.clamp(7.0, 12.0).toDouble();
 }
 
@@ -203,8 +201,7 @@ double _screenStableRadius(
   double viewScale, {
   double minRadius = 1.2,
 }) {
-  final scaledRadius =
-      baseRadius / math.pow(viewScale.clamp(1.0, 24.0), 0.55);
+  final scaledRadius = baseRadius / math.pow(viewScale.clamp(1.0, 24.0), 0.55);
   return scaledRadius.clamp(minRadius, baseRadius).toDouble();
 }
 
@@ -232,6 +229,10 @@ Offset _screenOffsetToScene(
   double viewScale,
 ) {
   return Offset(offset.dx / viewScale, offset.dy / viewScale);
+}
+
+double _mapRadiusScaleForSize(Size size) {
+  return size.width < 560 ? 0.935 : 0.94;
 }
 
 class _GridHoverData {
@@ -299,7 +300,8 @@ List<Offset> _projectMapRing(
       .toList(growable: false);
 }
 
-Path _buildProjectedShapePath(List<MapRing> rings, Offset center, double mapRadius) {
+Path _buildProjectedShapePath(
+    List<MapRing> rings, Offset center, double mapRadius) {
   final path = Path()..fillType = PathFillType.evenOdd;
   for (final ring in rings) {
     if (ring.points.isEmpty) {
@@ -493,9 +495,11 @@ Offset? _findNearestLandEdgePointForDisplay(
   return nearestPoint;
 }
 
-Offset _nearestPointOnSegmentForDisplay(Offset point, Offset start, Offset end) {
+Offset _nearestPointOnSegmentForDisplay(
+    Offset point, Offset start, Offset end) {
   final segment = end - start;
-  final segmentLengthSquared = segment.dx * segment.dx + segment.dy * segment.dy;
+  final segmentLengthSquared =
+      segment.dx * segment.dx + segment.dy * segment.dy;
   if (segmentLengthSquared == 0) {
     return start;
   }
@@ -566,7 +570,6 @@ class FlatWorldCanvas extends StatefulWidget {
 
 class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     with TickerProviderStateMixin {
-  static const double _minScale = 1;
   static const double _maxScale = 24;
   final TransformationController _transformationController =
       TransformationController();
@@ -580,9 +583,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   bool _isInteracting = false;
   final Set<String> _prefetchedTileKeys = <String>{};
   Size? _cachedSceneSize;
+  Size? _latestViewportSize;
   _ProjectedSceneCache? _projectedSceneCache;
   _OverlayAnchorCache? _overlayAnchorCache;
   AstronomySnapshot? _previousAstronomySnapshot;
+  bool _hasInitializedView = false;
 
   @override
   void initState() {
@@ -619,11 +624,15 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
 
   @override
   Widget build(BuildContext context) {
+    final isCompactScreen = MediaQuery.sizeOf(context).width < 720;
+    final outerCornerRadius = isCompactScreen ? 28.0 : 36.0;
+    final innerCornerRadius = isCompactScreen ? 22.0 : 28.0;
+    final canvasPadding = isCompactScreen ? 8.0 : 20.0;
     return AspectRatio(
       aspectRatio: 1,
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(36),
+          borderRadius: BorderRadius.circular(outerCornerRadius),
           gradient: const RadialGradient(
             colors: [
               Color(0xFFF8F4E7),
@@ -640,11 +649,32 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
             ),
           ],
         ),
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.all(canvasPadding),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(innerCornerRadius),
           child: LayoutBuilder(
             builder: (context, constraints) {
+              if (!constraints.hasBoundedWidth ||
+                  !constraints.hasBoundedHeight ||
+                  !constraints.maxWidth.isFinite ||
+                  !constraints.maxHeight.isFinite ||
+                  constraints.maxWidth <= 0 ||
+                  constraints.maxHeight <= 0) {
+                return const SizedBox.expand();
+              }
+
+              _latestViewportSize = constraints.biggest;
+              if (!_hasInitializedView) {
+                _hasInitializedView = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted || _latestViewportSize == null) {
+                    return;
+                  }
+                  _applyDefaultView(_latestViewportSize!);
+                });
+              }
+
+              final isCompactViewport = constraints.maxWidth < 560;
               final projectedScene = _ensureProjectedSceneCache(
                 constraints.biggest,
               );
@@ -688,7 +718,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                           _hoveredGridPoint != null &&
                           hovered.latitude == _hoveredGridPoint!.latitude &&
                           hovered.longitude == _hoveredGridPoint!.longitude &&
-                          (hovered.anchor - _hoveredGridPoint!.anchor).distance < 8;
+                          (hovered.anchor - _hoveredGridPoint!.anchor)
+                                  .distance <
+                              8;
                       if (mounted &&
                           !isSameHover &&
                           (hovered != null || _hoveredGridPoint != null)) {
@@ -709,7 +741,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                       child: InteractiveViewer(
                         transformationController: _transformationController,
                         boundaryMargin: const EdgeInsets.all(240),
-                        minScale: _minScale,
+                        minScale: _minScaleForViewport(constraints.biggest),
                         maxScale: _maxScale,
                         onInteractionStart: (_) => _beginInteraction(),
                         onInteractionEnd: (_) => _scheduleInteractionEnd(),
@@ -727,15 +759,15 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                   RepaintBoundary(
                                     child: ClipPath(
                                       clipper: const _MapDiskClipper(),
-              child: _MapTileLayer(
-                baseUrl: widget.tileBaseUrl,
-                detailLevel: widget.tileDetailLevel,
-                edgeMode: widget.edgeRenderMode,
-                tileVersion: _tileCacheVersion,
-                viewportSize: constraints.biggest,
-                tileZoom: tileZoom,
-                tileRange: tileRange,
-              ),
+                                      child: _MapTileLayer(
+                                        baseUrl: widget.tileBaseUrl,
+                                        detailLevel: widget.tileDetailLevel,
+                                        edgeMode: widget.edgeRenderMode,
+                                        tileVersion: _tileCacheVersion,
+                                        viewportSize: constraints.biggest,
+                                        tileZoom: tileZoom,
+                                        tileRange: tileRange,
+                                      ),
                                     ),
                                   ),
                                 if (!hasTileBase)
@@ -751,14 +783,16 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                   ),
                                 RepaintBoundary(
                                   child: CustomPaint(
-                                      painter: _FlatWorldPainter(
+                                    painter: _FlatWorldPainter(
                                       repaint: Listenable.merge([
                                         _astronomyAnimationController,
                                         _astronomyTransitionController,
                                       ]),
                                       projectedScene: projectedScene,
-                                      markerAnchorPoints: overlayAnchors.markerPoints,
-                                      labelAnchorPoints: overlayAnchors.labelPoints,
+                                      markerAnchorPoints:
+                                          overlayAnchors.markerPoints,
+                                      labelAnchorPoints:
+                                          overlayAnchors.labelPoints,
                                       markers: widget.markers,
                                       labels: widget.labels,
                                       showGrid: widget.showGrid,
@@ -772,7 +806,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                           widget.showStateBoundaries,
                                       previousAstronomySnapshot:
                                           _previousAstronomySnapshot,
-                                      astronomySnapshot: widget.astronomySnapshot,
+                                      astronomySnapshot:
+                                          widget.astronomySnapshot,
                                       astronomyTransitionValue:
                                           _astronomyTransitionController.value,
                                       showSunPath: widget.showSunPath,
@@ -842,9 +877,10 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                       ),
                     ),
                   Positioned(
-                    top: 14,
+                    top: isCompactViewport ? 10 : 14,
                     right: 14,
                     child: _ZoomControls(
+                      compact: isCompactViewport,
                       onZoomIn: () => _zoomAtCenter(1.35),
                       onZoomOut: () => _zoomAtCenter(1 / 1.35),
                       onRotateLeft: () => _rotateAtCenter(
@@ -861,10 +897,12 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                   if (widget.showGrid && _hoveredGridPoint != null)
                     Positioned(
                       left: (_hoveredGridPoint!.anchor.dx + 14)
-                          .clamp(12.0, math.max(12.0, constraints.maxWidth - 126.0))
+                          .clamp(12.0,
+                              math.max(12.0, constraints.maxWidth - 126.0))
                           .toDouble(),
                       top: (_hoveredGridPoint!.anchor.dy - 44)
-                          .clamp(12.0, math.max(12.0, constraints.maxHeight - 56.0))
+                          .clamp(12.0,
+                              math.max(12.0, constraints.maxHeight - 56.0))
                           .toDouble(),
                       child: IgnorePointer(
                         child: DecoratedBox(
@@ -919,7 +957,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     return nextCache;
   }
 
-  _OverlayAnchorCache _ensureOverlayAnchorCache(_ProjectedSceneCache projectedScene) {
+  _OverlayAnchorCache _ensureOverlayAnchorCache(
+      _ProjectedSceneCache projectedScene) {
     final hasMatchingCache = _overlayAnchorCache != null &&
         identical(_overlayAnchorCache!.projectedScene, projectedScene) &&
         _overlayAnchorCache!.edgeRenderMode == widget.edgeRenderMode &&
@@ -978,7 +1017,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   }
 
   int _tileZoomForViewScale(double viewScale) {
-    final rawZoom = (math.log(viewScale.clamp(1.0, 24.0)) / math.ln2).floor() + 2;
+    final rawZoom =
+        (math.log(viewScale.clamp(1.0, 24.0)) / math.ln2).floor() + 2;
     return rawZoom.clamp(0, 6).toInt();
   }
 
@@ -1025,17 +1065,32 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     required Rect visibleSceneRect,
     required int tileZoom,
   }) {
+    if (!viewportSize.width.isFinite ||
+        !viewportSize.height.isFinite ||
+        viewportSize.width <= 0 ||
+        viewportSize.height <= 0) {
+      return const _TileRange(minX: 0, maxX: 0, minY: 0, maxY: 0);
+    }
+
     final tileCount = 1 << tileZoom;
     final tileWidth = viewportSize.width / tileCount;
     final tileHeight = viewportSize.height / tileCount;
-    final minX =
-        (visibleSceneRect.left / tileWidth).floor().clamp(0, tileCount - 1).toInt();
-    final maxX =
-        (visibleSceneRect.right / tileWidth).ceil().clamp(0, tileCount - 1).toInt();
-    final minY =
-        (visibleSceneRect.top / tileHeight).floor().clamp(0, tileCount - 1).toInt();
-    final maxY =
-        (visibleSceneRect.bottom / tileHeight).ceil().clamp(0, tileCount - 1).toInt();
+    final minX = (visibleSceneRect.left / tileWidth)
+        .floor()
+        .clamp(0, tileCount - 1)
+        .toInt();
+    final maxX = (visibleSceneRect.right / tileWidth)
+        .ceil()
+        .clamp(0, tileCount - 1)
+        .toInt();
+    final minY = (visibleSceneRect.top / tileHeight)
+        .floor()
+        .clamp(0, tileCount - 1)
+        .toInt();
+    final maxY = (visibleSceneRect.bottom / tileHeight)
+        .ceil()
+        .clamp(0, tileCount - 1)
+        .toInt();
     return _TileRange(
       minX: minX,
       maxX: maxX,
@@ -1069,7 +1124,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
           if (isVisibleTile) {
             continue;
           }
-          final key = '${widget.tileDetailLevel}:$edgeMode:$tileZoom:$tileX:$tileY';
+          final key =
+              '${widget.tileDetailLevel}:$edgeMode:$tileZoom:$tileX:$tileY';
           if (_prefetchedTileKeys.contains(key)) {
             continue;
           }
@@ -1094,7 +1150,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   ) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = math.min(size.width, size.height) / 2;
-    final mapRadius = radius * 0.94;
+    final mapRadius = radius * _mapRadiusScaleForSize(size);
     final landEntries = <_ProjectedShapeEntry>[];
     final boundaryEntries = <_ProjectedShapeEntry>[];
     final stateBoundaryEntries = <_ProjectedShapeEntry>[];
@@ -1103,7 +1159,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     final projectedLandRings = <List<Offset>>[];
 
     for (final shape in shapes) {
-      final rings = shape.rings.where((ring) => ring.points.isNotEmpty).toList();
+      final rings =
+          shape.rings.where((ring) => ring.points.isNotEmpty).toList();
       if (rings.isEmpty) {
         continue;
       }
@@ -1159,8 +1216,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     _beginInteraction();
     final currentMatrix = _transformationController.value.clone();
     final currentScale = currentMatrix.getMaxScaleOnAxis();
+    final minScale = _minScaleForViewport(_latestViewportSize);
     final scaleDelta = scrollDelta < 0 ? 1.1 : 0.9;
-    final targetScale = (currentScale * scaleDelta).clamp(_minScale, _maxScale);
+    final targetScale = (currentScale * scaleDelta).clamp(minScale, _maxScale);
     final appliedScale = targetScale / currentScale;
     if (appliedScale == 1) {
       return;
@@ -1179,7 +1237,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     _beginInteraction();
     final currentMatrix = _transformationController.value.clone();
     final currentScale = currentMatrix.getMaxScaleOnAxis();
-    final targetScale = (currentScale * scaleDelta).clamp(_minScale, _maxScale);
+    final minScale = _minScaleForViewport(_latestViewportSize);
+    final targetScale = (currentScale * scaleDelta).clamp(minScale, _maxScale);
     final appliedScale = targetScale / currentScale;
     if (appliedScale == 1) {
       return;
@@ -1207,14 +1266,45 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   }
 
   void _resetView() {
-      _beginInteraction();
+    _beginInteraction();
+    final viewportSize = _latestViewportSize;
+    if (viewportSize == null) {
       setState(() {
         _rotationRadians = 0;
         _labelScale = 1;
         _viewScale = 1;
         _transformationController.value = Matrix4.identity();
       });
-      _scheduleInteractionEnd();
+    } else {
+      _applyDefaultView(viewportSize);
+    }
+    _scheduleInteractionEnd();
+  }
+
+  double _minScaleForViewport(Size? viewportSize) {
+    if (viewportSize == null) {
+      return 1;
+    }
+    return viewportSize.width < 560 ? 0.82 : 1;
+  }
+
+  double _defaultScaleForViewport(Size viewportSize) {
+    return viewportSize.width < 560 ? 0.88 : 1;
+  }
+
+  void _applyDefaultView(Size viewportSize) {
+    final scale = _defaultScaleForViewport(viewportSize);
+    final horizontalInset = (viewportSize.width * (1 - scale)) / 2;
+    final verticalInset = (viewportSize.height * (1 - scale)) / 2;
+    setState(() {
+      _rotationRadians = 0;
+      _labelScale = scale;
+      _viewScale = scale;
+      _transformationController.value = Matrix4.identity()
+        ..translateByDouble(horizontalInset, verticalInset, 0, 1)
+        ..scaleByDouble(scale, scale, 1, 1);
+    });
+    widget.onViewScaleChanged?.call(scale);
   }
 
   void _beginInteraction() {
@@ -1260,7 +1350,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     final scenePoint = _transformationController.toScene(viewportPosition);
     final center = canvasSize.center(Offset.zero);
     final radius = math.min(canvasSize.width, canvasSize.height) / 2;
-    final mapRadius = radius * 0.94;
+    final mapRadius = radius * _mapRadiusScaleForSize(canvasSize);
     final normalizedX = (scenePoint.dx - center.dx) / mapRadius;
     final normalizedY = (scenePoint.dy - center.dy) / mapRadius;
     final radiusRatio = math.sqrt(
@@ -1274,9 +1364,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
         (math.atan2(normalizedY, normalizedX) * 180 / math.pi + 360) % 360;
     final rawLongitude = ((-thetaDegrees - 90 + 540) % 360) - 180;
     final latitude = radiusRatio <= _innerWorldRadius
-        ? 90 -
-            (radiusRatio / _innerWorldRadius) *
-                (90 - _innerWorldMinLatitude)
+        ? 90 - (radiusRatio / _innerWorldRadius) * (90 - _innerWorldMinLatitude)
         : _innerWorldMinLatitude -
             ((radiusRatio - _innerWorldRadius) /
                     (_outerRingRadius - _innerWorldRadius)) *
@@ -1285,11 +1373,10 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     final candidateLatitudes = _buildLatitudeGridValues(widget.gridStepDegrees);
     final snappedLatitude = candidateLatitudes.reduce(
       (best, current) =>
-          (latitude - current).abs() < (latitude - best).abs()
-              ? current
-              : best,
+          (latitude - current).abs() < (latitude - best).abs() ? current : best,
     );
-    final candidateLongitudes = _buildLongitudeGridValues(widget.gridStepDegrees);
+    final candidateLongitudes =
+        _buildLongitudeGridValues(widget.gridStepDegrees);
     final snappedLongitude = candidateLongitudes.reduce(
       (best, current) =>
           _longitudeDistanceDegrees(rawLongitude, current.toDouble()) <
@@ -1316,11 +1403,12 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     );
   }
 
-  MapTapLocation? _resolveTapLocation(Offset viewportPosition, Size canvasSize) {
+  MapTapLocation? _resolveTapLocation(
+      Offset viewportPosition, Size canvasSize) {
     final scenePoint = _transformationController.toScene(viewportPosition);
     final center = canvasSize.center(Offset.zero);
     final radius = math.min(canvasSize.width, canvasSize.height) / 2;
-    final mapRadius = radius * 0.94;
+    final mapRadius = radius * _mapRadiusScaleForSize(canvasSize);
     final normalizedX = (scenePoint.dx - center.dx) / mapRadius;
     final normalizedY = (scenePoint.dy - center.dy) / mapRadius;
     final radiusRatio = math.sqrt(
@@ -1336,9 +1424,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     final rawLongitude = ((-thetaDegrees - 90 + 540) % 360) - 180;
 
     final latitude = radiusRatio <= _innerWorldRadius
-        ? 90 -
-            (radiusRatio / _innerWorldRadius) *
-                (90 - _innerWorldMinLatitude)
+        ? 90 - (radiusRatio / _innerWorldRadius) * (90 - _innerWorldMinLatitude)
         : _innerWorldMinLatitude -
             ((radiusRatio - _innerWorldRadius) /
                     (_outerRingRadius - _innerWorldRadius)) *
@@ -1349,9 +1435,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       longitude: rawLongitude.clamp(-180, 180).toDouble(),
       x: normalizedX,
       y: normalizedY,
-      zone: radiusRatio <= _innerWorldRadius
-          ? 'inner_world'
-          : 'antarctic_ring',
+      zone: radiusRatio <= _innerWorldRadius ? 'inner_world' : 'antarctic_ring',
     );
   }
 
@@ -1368,6 +1452,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
 
 class _ZoomControls extends StatelessWidget {
   const _ZoomControls({
+    this.compact = false,
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onRotateLeft,
@@ -1375,6 +1460,7 @@ class _ZoomControls extends StatelessWidget {
     required this.onReset,
   });
 
+  final bool compact;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onRotateLeft;
@@ -1386,7 +1472,7 @@ class _ZoomControls extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xDDF8F2DE),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(compact ? 999 : 14),
         boxShadow: const [
           BoxShadow(
             color: Color(0x22000000),
@@ -1395,30 +1481,50 @@ class _ZoomControls extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
+            visualDensity:
+                compact ? VisualDensity.compact : VisualDensity.standard,
+            iconSize: compact ? 20 : 24,
+            padding: EdgeInsets.all(compact ? 8 : 12),
             tooltip: 'Zoom in',
             onPressed: onZoomIn,
             icon: const Icon(Icons.add),
           ),
           IconButton(
+            visualDensity:
+                compact ? VisualDensity.compact : VisualDensity.standard,
+            iconSize: compact ? 20 : 24,
+            padding: EdgeInsets.all(compact ? 8 : 12),
             tooltip: 'Zoom out',
             onPressed: onZoomOut,
             icon: const Icon(Icons.remove),
           ),
           IconButton(
+            visualDensity:
+                compact ? VisualDensity.compact : VisualDensity.standard,
+            iconSize: compact ? 20 : 24,
+            padding: EdgeInsets.all(compact ? 8 : 12),
             tooltip: 'Rotate left',
             onPressed: onRotateLeft,
             icon: const Icon(Icons.rotate_left),
           ),
           IconButton(
+            visualDensity:
+                compact ? VisualDensity.compact : VisualDensity.standard,
+            iconSize: compact ? 20 : 24,
+            padding: EdgeInsets.all(compact ? 8 : 12),
             tooltip: 'Rotate right',
             onPressed: onRotateRight,
             icon: const Icon(Icons.rotate_right),
           ),
           IconButton(
+            visualDensity:
+                compact ? VisualDensity.compact : VisualDensity.standard,
+            iconSize: compact ? 20 : 24,
+            padding: EdgeInsets.all(compact ? 8 : 12),
             tooltip: 'Reset view',
             onPressed: onReset,
             icon: const Icon(Icons.center_focus_strong),
@@ -1473,23 +1579,23 @@ class _MapTileLayer extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         for (final tile in visibleTiles)
-            Positioned(
-              left: tile.x * tileWidth,
-              top: tile.y * tileHeight,
-              width: tileWidth,
-              height: tileHeight,
-              child: _TileImage(
-                baseUrl: baseUrl,
-                detailLevel: detailLevel,
-                edgeSlug: edgeSlug,
-                tileVersion: tileVersion,
-                tileZoom: tileZoom,
-                tileX: tile.x,
-                tileY: tile.y,
-                tileWidth: tileWidth,
-                tileHeight: tileHeight,
-              ),
+          Positioned(
+            left: tile.x * tileWidth,
+            top: tile.y * tileHeight,
+            width: tileWidth,
+            height: tileHeight,
+            child: _TileImage(
+              baseUrl: baseUrl,
+              detailLevel: detailLevel,
+              edgeSlug: edgeSlug,
+              tileVersion: tileVersion,
+              tileZoom: tileZoom,
+              tileX: tile.x,
+              tileY: tile.y,
+              tileWidth: tileWidth,
+              tileHeight: tileHeight,
             ),
+          ),
       ],
     );
   }
@@ -1500,7 +1606,8 @@ class _MapDiskClipper extends CustomClipper<Path> {
 
   @override
   Path getClip(Size size) {
-    final radius = math.min(size.width, size.height) * 0.47;
+    final radius =
+        math.min(size.width, size.height) * (_mapRadiusScaleForSize(size) / 2);
     final center = Offset(size.width / 2, size.height / 2);
     return Path()
       ..addOval(
@@ -1718,7 +1825,8 @@ class _BaseMapPainter extends CustomPainter {
     if (edgeRenderMode == EdgeRenderMode.coastline ||
         edgeRenderMode == EdgeRenderMode.both) {
       for (final entry in projectedScene.landEntries) {
-        _paintCoastStroke(canvas, entry.path, entry.shape, useFastCoastRendering);
+        _paintCoastStroke(
+            canvas, entry.path, entry.shape, useFastCoastRendering);
       }
     }
 
@@ -1738,9 +1846,8 @@ class _BaseMapPainter extends CustomPainter {
       ..strokeWidth = shape.name == 'Antarctica Rim'
           ? (useFastCoastRendering ? 2.6 : 3.4)
           : (useFastCoastRendering ? 0.55 : 0.75)
-      ..strokeCap = shape.name == 'Antarctica Rim'
-          ? StrokeCap.round
-          : StrokeCap.butt
+      ..strokeCap =
+          shape.name == 'Antarctica Rim' ? StrokeCap.round : StrokeCap.butt
       ..strokeJoin = StrokeJoin.round
       ..isAntiAlias = true;
     canvas.drawPath(path, strokePaint);
@@ -1894,7 +2001,8 @@ class _FlatWorldPainter extends CustomPainter {
       }
     }
 
-    if (projectedScene.landEntries.isEmpty && projectedScene.boundaryEntries.isEmpty) {
+    if (projectedScene.landEntries.isEmpty &&
+        projectedScene.boundaryEntries.isEmpty) {
       final emptyPainter = TextPainter(
         text: const TextSpan(
           text: 'No backend map layer loaded',
@@ -2096,9 +2204,8 @@ class _FlatWorldPainter extends CustomPainter {
       wedgePath.close();
 
       final fillPaint = Paint()
-        ..color = index.isEven
-            ? const Color(0x122E557A)
-            : const Color(0x060F2940)
+        ..color =
+            index.isEven ? const Color(0x122E557A) : const Color(0x060F2940)
         ..style = PaintingStyle.fill
         ..isAntiAlias = true;
       canvas.drawPath(wedgePath, fillPaint);
@@ -2113,7 +2220,8 @@ class _FlatWorldPainter extends CustomPainter {
 
     for (final offsetHours in timeZoneOffsets) {
       final boundaryLongitude = (offsetHours * 15.0) - 7.5;
-      final edgePoint = _projectLatLon(center, mapRadius, -90, boundaryLongitude);
+      final edgePoint =
+          _projectLatLon(center, mapRadius, -90, boundaryLongitude);
       canvas.drawLine(center, edgePoint, spokePaint);
     }
 
@@ -2159,7 +2267,9 @@ class _FlatWorldPainter extends CustomPainter {
     final useLightRender = projectedScene.timeZoneEntries.length > 800;
     canvas.save();
     canvas.clipPath(projectedScene.landClipPath);
-    for (var index = 0; index < projectedScene.timeZoneEntries.length; index += 1) {
+    for (var index = 0;
+        index < projectedScene.timeZoneEntries.length;
+        index += 1) {
       final entry = projectedScene.timeZoneEntries[index];
       if (!entry.hasClosedRing) {
         continue;
@@ -2286,7 +2396,8 @@ class _FlatWorldPainter extends CustomPainter {
       source: current.source,
       sun: AstronomyBody(
         name: current.sun.name,
-        subpoint: _lerpPlaceMarker(previous.sun.subpoint, current.sun.subpoint, t),
+        subpoint:
+            _lerpPlaceMarker(previous.sun.subpoint, current.sun.subpoint, t),
         path: current.sun.path,
         phaseName: current.sun.phaseName,
         illuminationFraction: current.sun.illuminationFraction,
@@ -2349,7 +2460,8 @@ class _FlatWorldPainter extends CustomPainter {
     }
 
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)));
+    canvas.clipPath(
+        Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)));
     _paintAstronomyLightMesh(canvas, center, mapRadius, snapshot);
     canvas.restore();
 
@@ -2404,7 +2516,8 @@ class _FlatWorldPainter extends CustomPainter {
         observer.longitude,
       );
       final observerPaint = Paint()..color = const Color(0xFF0F2940);
-      final observerRadius = _screenStableRadius(3.2, viewScale, minRadius: 1.2);
+      final observerRadius =
+          _screenStableRadius(3.2, viewScale, minRadius: 1.2);
       canvas.drawCircle(observerPoint, observerRadius, observerPaint);
 
       final observerLabelPainter = TextPainter(
@@ -2450,11 +2563,9 @@ class _FlatWorldPainter extends CustomPainter {
 
     for (double latitude = 90.0; latitude > -90.0; latitude -= latitudeStep) {
       final nextLatitude = math.max(-90.0, latitude - latitudeStep);
-      for (
-        double longitude = -180.0;
-        longitude < 180.0;
-        longitude += longitudeStep
-      ) {
+      for (double longitude = -180.0;
+          longitude < 180.0;
+          longitude += longitudeStep) {
         final nextLongitude = math.min(180.0, longitude + longitudeStep);
         final topLeft = _projectLatLon(center, mapRadius, latitude, longitude);
         final topRight = _projectLatLon(
@@ -2563,8 +2674,7 @@ class _FlatWorldPainter extends CustomPainter {
     );
     final daylightBlend = _smoothStep(-0.18, 0.12, sunIncidence);
     double darkness = ui.lerpDouble(0.66, 0.03, daylightBlend) ?? 0.34;
-    darkness -=
-        moonStrength *
+    darkness -= moonStrength *
         moonIncidence.clamp(0.0, 1.0).toDouble() *
         (1.0 - daylightBlend);
     darkness = darkness.clamp(0.02, 0.68).toDouble();
@@ -2613,14 +2723,12 @@ class _FlatWorldPainter extends CustomPainter {
     Canvas canvas,
     Offset center,
     double mapRadius,
-    PlaceMarker point,
-    {
-      required String label,
-      required Color color,
-      required Color glowColor,
-      required double baseRadius,
-    }
-  ) {
+    PlaceMarker point, {
+    required String label,
+    required Color color,
+    required Color glowColor,
+    required double baseRadius,
+  }) {
     final projected = _project(center, mapRadius, point.x, point.y);
     final pulse = 0.78 + (0.22 * math.sin(animationValue * math.pi * 2));
     final glowPaint = Paint()..color = glowColor;
@@ -2630,7 +2738,8 @@ class _FlatWorldPainter extends CustomPainter {
       viewScale,
       minRadius: 3.0,
     );
-    final bodyRadius = _screenStableRadius(baseRadius, viewScale, minRadius: 1.8);
+    final bodyRadius =
+        _screenStableRadius(baseRadius, viewScale, minRadius: 1.8);
     canvas.drawCircle(projected, glowRadius, glowPaint);
     canvas.drawCircle(projected, bodyRadius, bodyPaint);
 
@@ -2725,7 +2834,8 @@ class _FlatWorldPainter extends CustomPainter {
       )..layout(maxWidth: maxWidth);
 
       if (isCityLabel) {
-        final cityDotRadius = _screenStableRadius(2.2, viewScale, minRadius: 0.95);
+        final cityDotRadius =
+            _screenStableRadius(2.2, viewScale, minRadius: 0.95);
         final cityDotPaint = Paint()..color = const Color(0xFF173042);
         canvas.drawCircle(point, cityDotRadius, cityDotPaint);
         _paintAnchoredPointLabel(
@@ -2819,7 +2929,8 @@ class _FlatWorldPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     )..layout();
 
-    final labelCenter = center + _screenOffsetToScene(const Offset(0, -16), viewScale);
+    final labelCenter =
+        center + _screenOffsetToScene(const Offset(0, -16), viewScale);
     final labelBackground = RRect.fromRectAndRadius(
       Rect.fromCenter(
         center: labelCenter,
@@ -2847,14 +2958,16 @@ class _FlatWorldPainter extends CustomPainter {
     required Paint dotPaint,
     required Color leaderColor,
   }) {
-    final labelCenter = anchorPoint + _screenOffsetToScene(labelOffsetInScreen, viewScale);
+    final labelCenter =
+        anchorPoint + _screenOffsetToScene(labelOffsetInScreen, viewScale);
     final leaderPaint = Paint()
       ..color = leaderColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = _screenStableRadius(0.9, viewScale, minRadius: 0.5);
 
     canvas.drawLine(
-      anchorPoint + _screenOffsetToScene(Offset(dotRadius, -dotRadius), viewScale),
+      anchorPoint +
+          _screenOffsetToScene(Offset(dotRadius, -dotRadius), viewScale),
       labelCenter + _screenOffsetToScene(const Offset(-4, 4), viewScale),
       leaderPaint,
     );
