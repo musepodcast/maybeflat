@@ -80,7 +80,10 @@ Then edit `.env.home` and set:
 
 ```text
 CLOUDFLARE_TUNNEL_TOKEN=your-real-token-here
+MAYBEFLAT_HOME_RESTART_POLICY=no
 ```
+
+`MAYBEFLAT_HOME_RESTART_POLICY=no` keeps the home-hosting containers from automatically returning when Docker Desktop or Windows starts again. If you explicitly want the stack to come back with Docker Desktop, set it to `unless-stopped`.
 
 ## 4. Start The Stack
 
