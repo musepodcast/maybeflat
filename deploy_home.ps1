@@ -3,6 +3,34 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
 
+function Invoke-External {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [string]$WorkingDirectory
+    )
+
+    if ($WorkingDirectory) {
+        Push-Location $WorkingDirectory
+    }
+
+    try {
+        & $FilePath @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "$FilePath $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+        }
+    }
+    finally {
+        if ($WorkingDirectory) {
+            Pop-Location
+        }
+    }
+}
+
 function Get-ConfigValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -41,15 +69,38 @@ if (-not $dockerCommand) {
 
 Push-Location "app_flutter"
 try {
-    flutter pub get
-    flutter build web --release --dart-define=MAYBEFLAT_API_BASE_URL=/api
+    Invoke-External -FilePath "flutter" -Arguments @("pub", "get")
+    Invoke-External -FilePath "flutter" -Arguments @(
+        "build",
+        "web",
+        "--release",
+        "--dart-define=MAYBEFLAT_API_BASE_URL=/api"
+    )
 }
 finally {
     Pop-Location
 }
 
-docker compose -f docker-compose.home.yml --env-file .env.home up -d --build --remove-orphans
-docker compose -f docker-compose.home.yml --env-file .env.home ps
+Invoke-External -FilePath "docker" -Arguments @("version")
+Invoke-External -FilePath "docker" -Arguments @(
+    "compose",
+    "-f",
+    "docker-compose.home.yml",
+    "--env-file",
+    ".env.home",
+    "up",
+    "-d",
+    "--build",
+    "--remove-orphans"
+)
+Invoke-External -FilePath "docker" -Arguments @(
+    "compose",
+    "-f",
+    "docker-compose.home.yml",
+    "--env-file",
+    ".env.home",
+    "ps"
+)
 
 $preRenderEnabled = Get-ConfigValue -Path ".env.home" -Key "MAYBEFLAT_PRERENDER_TILES"
 if ([string]::IsNullOrWhiteSpace($preRenderEnabled)) {
@@ -68,8 +119,22 @@ if ($preRenderEnabled -notin @("0", "false", "False", "FALSE", "no", "No", "NO")
     }
 
     Write-Host "Pre-rendering shared tile pyramid (max zoom $preRenderMaxZoom, edge modes $preRenderEdgeModes)..."
-    docker compose -f docker-compose.home.yml --env-file .env.home exec -T api `
-        python generate_tiles.py --max-zoom $preRenderMaxZoom --edge-modes $preRenderEdgeModes
+    Invoke-External -FilePath "docker" -Arguments @(
+        "compose",
+        "-f",
+        "docker-compose.home.yml",
+        "--env-file",
+        ".env.home",
+        "exec",
+        "-T",
+        "api",
+        "python",
+        "generate_tiles.py",
+        "--max-zoom",
+        $preRenderMaxZoom,
+        "--edge-modes",
+        $preRenderEdgeModes
+    )
 }
 
 Write-Host ""
