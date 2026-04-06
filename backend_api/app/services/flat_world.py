@@ -5,10 +5,12 @@ from datetime import datetime, timezone
 from math import atan, atan2, ceil, cos, floor, radians, sin, sqrt, tan
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.data.city_search import build_curated_world_city_labels, load_city_entries
 from app.data.coastline_loader import (
     get_state_boundary_dataset_status,
     load_boundary_shapes,
     load_scene_shapes,
+    load_state_boundary_labels,
     load_state_boundary_shapes,
     load_timezone_boundary_shapes,
 )
@@ -147,6 +149,8 @@ def _label_min_scale(layer: str) -> float:
         return 1.0
     if layer == "country":
         return 1.8
+    if layer == "state":
+        return 3.6
     if layer == "city_major":
         return 3.0
     if layer == "city_regional":
@@ -177,7 +181,94 @@ def _build_scene_labels() -> list[MapLabelResponse]:
                 ),
             )
         )
+    for label in build_curated_world_city_labels():
+        transformed = transform_point(
+            TransformRequest(
+                name=label.name,
+                latitude=label.latitude,
+                longitude=label.longitude,
+            )
+        )
+        labels.append(
+            MapLabelResponse(
+                name=label.name,
+                layer=label.layer,
+                x=transformed.x,
+                y=transformed.y,
+                min_scale=label.min_scale,
+            )
+        )
     return labels
+
+
+def _build_state_labels() -> list[MapLabelResponse]:
+    raw_labels, _, _ = load_state_boundary_labels()
+    labels: list[MapLabelResponse] = []
+    for label in raw_labels:
+        transformed = transform_point(
+            TransformRequest(
+                name=str(label["name"]),
+                latitude=float(label["latitude"]),
+                longitude=float(label["longitude"]),
+            )
+        )
+        labels.append(
+            MapLabelResponse(
+                name=str(label["name"]),
+                layer="state",
+                x=transformed.x,
+                y=transformed.y,
+                min_scale=float(label.get("min_scale", _label_min_scale("state"))),
+            )
+        )
+    return labels
+
+
+@lru_cache(maxsize=1)
+def _build_city_detail_labels() -> tuple[MapLabelResponse, ...]:
+    labels: list[MapLabelResponse] = []
+    for entry in load_city_entries():
+        transformed = transform_point(
+            TransformRequest(
+                name=entry.name,
+                latitude=entry.latitude,
+                longitude=entry.longitude,
+            )
+        )
+        labels.append(
+            MapLabelResponse(
+                name=entry.name,
+                layer="city_detail",
+                x=transformed.x,
+                y=transformed.y,
+                min_scale=5.6,
+            )
+        )
+    return tuple(labels)
+
+
+def list_city_labels(
+    *,
+    min_x: float,
+    max_x: float,
+    min_y: float,
+    max_y: float,
+    limit: int = 400,
+) -> list[MapLabelResponse]:
+    left = min(min_x, max_x)
+    right = max(min_x, max_x)
+    top = min(min_y, max_y)
+    bottom = max(min_y, max_y)
+
+    results: list[MapLabelResponse] = []
+    for label in _build_city_detail_labels():
+        if label.x < left or label.x > right or label.y < top or label.y > bottom:
+            continue
+        results.append(label)
+        if len(results) >= limit:
+            break
+
+    return results
 
 
 def _format_time_zone_label(offset_minutes: int) -> str:
@@ -487,6 +578,8 @@ def _build_scene_cached(detail: str, include_state_boundaries: bool) -> MapScene
         if shape.get("rings")
     ]
     labels = _build_scene_labels()
+    if include_state_boundaries:
+        labels.extend(_build_state_labels())
 
     return MapSceneResponse(
         markers=markers,

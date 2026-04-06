@@ -5,6 +5,7 @@ from app.schemas.map_models import (
     AstronomySnapshotResponse,
     CitySearchResponse,
     FlatPointResponse,
+    MapLabelResponse,
     MapModelResponse,
     MapSceneResponse,
     MeasureRequest,
@@ -17,6 +18,7 @@ from app.services.astronomy import get_astronomy_snapshot, list_astronomy_events
 from app.services.flat_world import (
     build_model_summary,
     build_scene,
+    list_city_labels,
     measure_between_points,
     transform_point,
 )
@@ -112,9 +114,25 @@ def get_city_search(
     )
 
 
-@router.get("/tiles/{detail}/{edge_mode}/{z}/{x}/{y}.png")
+@router.get("/labels/cities", response_model=list[MapLabelResponse])
+def get_city_labels(
+    min_x: float = Query(...),
+    max_x: float = Query(...),
+    min_y: float = Query(...),
+    max_y: float = Query(...),
+    limit: int = Query(default=400, ge=1, le=800),
+) -> list[MapLabelResponse]:
+    return list_city_labels(
+        min_x=min_x,
+        max_x=max_x,
+        min_y=min_y,
+        max_y=max_y,
+        limit=limit,
+    )
+
+
+@router.get("/tiles/{edge_mode}/{z}/{x}/{y}.png")
 def get_tile(
-    detail: str,
     edge_mode: str,
     z: int,
     x: int,
@@ -122,7 +140,6 @@ def get_tile(
 ) -> Response:
     try:
         tile_bytes = render_tile_png(
-            detail=detail,
             edge_mode=edge_mode,
             z=z,
             x=x,
@@ -134,7 +151,23 @@ def get_tile(
     return Response(
         content=tile_bytes,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/tiles/{detail}/{edge_mode}/{z}/{x}/{y}.png")
+def get_legacy_tile(
+    detail: str,
+    edge_mode: str,
+    z: int,
+    x: int,
+    y: int,
+) -> Response:
+    return get_tile(
+        edge_mode=edge_mode,
+        z=z,
+        x=x,
+        y=y,
     )
 
 

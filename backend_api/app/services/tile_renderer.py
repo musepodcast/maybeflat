@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from io import BytesIO
+from pathlib import Path
 from typing import TypeAlias
 
 from PIL import Image, ImageChops, ImageDraw
@@ -14,13 +16,13 @@ MAX_TILE_ZOOM = 6
 WORLD_HALF_EXTENT = 1 / 0.94
 WORLD_MIN = -WORLD_HALF_EXTENT
 WORLD_MAX = WORLD_HALF_EXTENT
-DETAIL_LEVELS = ["mobile", "desktop", "full"]
 EDGE_MODES = ["coastline", "country", "both"]
 SUPER_SAMPLE_SCALE = 2
+SHARED_TILE_SET = "shared-v1"
 DEFAULT_WARM_EDGE_MODE = "coastline"
 DEFAULT_WARM_SCENE_DETAILS = ("mobile", "desktop", "full")
-DEFAULT_WARM_TILE_DETAILS = ("mobile", "desktop")
 DEFAULT_WARM_MAX_ZOOM = 2
+TILE_CACHE_VERSION = "20260405-capacity-v1"
 ShapeBounds: TypeAlias = tuple[float, float, float, float]
 IndexedShape: TypeAlias = tuple[MapShapeResponse, ShapeBounds]
 
@@ -31,22 +33,19 @@ def build_tile_manifest() -> TileManifestResponse:
         max_zoom=MAX_TILE_ZOOM,
         world_min=round(WORLD_MIN, 6),
         world_max=round(WORLD_MAX, 6),
-        detail_levels=DETAIL_LEVELS,
         edge_modes=EDGE_MODES,
-        url_template="/map/tiles/{detail}/{edge_mode}/{z}/{x}/{y}.png",
+        tile_set=SHARED_TILE_SET,
+        url_template="/map/tiles/{edge_mode}/{z}/{x}/{y}.png",
     )
 
 
 def render_tile_png(
     *,
-    detail: str,
     edge_mode: str,
     z: int,
     x: int,
     y: int,
 ) -> bytes:
-    if detail not in DETAIL_LEVELS:
-        raise ValueError(f"Unsupported tile detail: {detail}")
     if edge_mode not in EDGE_MODES:
         raise ValueError(f"Unsupported edge mode: {edge_mode}")
     if z < 0 or z > MAX_TILE_ZOOM:
@@ -56,23 +55,65 @@ def render_tile_png(
     if x < 0 or x > max_index or y < 0 or y > max_index:
         raise ValueError("Tile coordinate out of range")
 
-    return _render_tile_png_cached(detail, edge_mode, z, x, y)
+    cache_path = _tile_cache_path(edge_mode, z, x, y)
+    cached_tile = _read_cached_tile_bytes(cache_path)
+    if cached_tile is not None:
+        return cached_tile
+
+    tile_bytes = _render_tile_png_cached(edge_mode, z, x, y)
+    _write_cached_tile_bytes(cache_path, tile_bytes)
+    return tile_bytes
 
 
 def warm_default_cache() -> None:
-    for detail in DEFAULT_WARM_SCENE_DETAILS:
+    scene_details = _configured_scene_details(
+        "MAYBEFLAT_WARM_SCENE_DETAILS",
+        DEFAULT_WARM_SCENE_DETAILS,
+    )
+    for detail in scene_details:
         _get_scene(detail)
         _get_indexed_scene(detail)
 
-    for detail in DEFAULT_WARM_TILE_DETAILS:
-        for zoom in range(DEFAULT_WARM_MAX_ZOOM + 1):
-            for x, y in _ordered_tile_coordinates(zoom):
-                _render_tile_png_cached(detail, DEFAULT_WARM_EDGE_MODE, zoom, x, y)
+    edge_modes = _configured_edge_modes()
+    max_zoom = _configured_warm_max_zoom()
+    warm_marker = _warm_marker_path(edge_modes, max_zoom)
+    if warm_marker.exists():
+        return
+
+    warm_lock = warm_marker.with_suffix(".lock")
+    try:
+        warm_lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(warm_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        return
+
+    try:
+        for edge_mode in edge_modes:
+            for zoom in range(max_zoom + 1):
+                for x, y in _ordered_tile_coordinates(zoom):
+                    render_tile_png(
+                        edge_mode=edge_mode,
+                        z=zoom,
+                        x=x,
+                        y=y,
+                    )
+        warm_marker.write_text("ok\n", encoding="utf-8")
+    finally:
+        try:
+            warm_lock.unlink()
+        except FileNotFoundError:
+            pass
 
 
 @lru_cache(maxsize=8)
 def _get_scene(detail: str) -> MapSceneResponse:
     return build_scene(detail, include_state_boundaries=False)
+
+
+@lru_cache(maxsize=1)
+def _shared_tile_scene() -> MapSceneResponse:
+    return build_scene("full", include_state_boundaries=False)
 
 
 @lru_cache(maxsize=8)
@@ -111,7 +152,6 @@ def _get_indexed_scene(
 
 @lru_cache(maxsize=1024)
 def _render_tile_png_cached(
-    detail: str,
     edge_mode: str,
     z: int,
     x: int,
@@ -122,7 +162,8 @@ def _render_tile_png_cached(
     draw = ImageDraw.Draw(tile_image, "RGBA")
 
     tile_bounds = _tile_bounds(z, x, y)
-    _, indexed_land_shapes, indexed_boundary_shapes, _, _ = _get_indexed_scene(detail)
+    indexed_land_shapes = _shared_indexed_land_shapes()
+    indexed_boundary_shapes = _shared_indexed_boundary_shapes()
     land_shapes = [
         shape
         for shape, bounds in indexed_land_shapes
@@ -165,7 +206,7 @@ def _render_tile_png_cached(
                 tile_bounds,
                 tile_pixels,
                 width=max(1, round(1.2 * SUPER_SAMPLE_SCALE)),
-                alpha=132 if detail != "mobile" else 110,
+                alpha=132,
             )
         if edge_mode == "coastline":
             boundary_alpha = boundary_layer.getchannel("A")
@@ -198,6 +239,26 @@ def _render_tile_png_cached(
     buffer = BytesIO()
     tile_image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+@lru_cache(maxsize=1)
+def _shared_indexed_land_shapes() -> tuple[IndexedShape, ...]:
+    scene = _shared_tile_scene()
+    return tuple(
+        (shape, _shape_bounds(shape))
+        for shape in scene.shapes
+        if shape.role not in {"boundary", "state_boundary", "timezone"}
+    )
+
+
+@lru_cache(maxsize=1)
+def _shared_indexed_boundary_shapes() -> tuple[IndexedShape, ...]:
+    scene = _shared_tile_scene()
+    return tuple(
+        (shape, _shape_bounds(shape))
+        for shape in scene.shapes
+        if shape.role == "boundary"
+    )
 
 
 def _tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
@@ -235,6 +296,102 @@ def _ordered_tile_coordinates(z: int) -> list[tuple[int, int]]:
         )
     )
     return coordinates
+
+
+def _tile_cache_root() -> Path:
+    configured_root = os.getenv(
+        "MAYBEFLAT_TILE_CACHE_ROOT",
+        "/var/cache/maybeflat/tiles",
+    ).strip()
+    return Path(configured_root) / TILE_CACHE_VERSION
+
+
+def _tile_cache_path(
+    edge_mode: str,
+    z: int,
+    x: int,
+    y: int,
+) -> Path:
+    return (
+        _tile_cache_root()
+        / "api"
+        / "map"
+        / "tiles"
+        / edge_mode
+        / str(z)
+        / str(x)
+        / f"{y}.png"
+    )
+
+
+def _read_cached_tile_bytes(cache_path: Path) -> bytes | None:
+    try:
+        if cache_path.exists():
+            return cache_path.read_bytes()
+    except OSError:
+        return None
+    return None
+
+
+def _write_cached_tile_bytes(cache_path: Path, tile_bytes: bytes) -> None:
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = cache_path.with_name(
+            f"{cache_path.name}.{os.getpid()}.tmp",
+        )
+        temp_path.write_bytes(tile_bytes)
+        os.replace(temp_path, cache_path)
+    except OSError:
+        return
+
+
+def _configured_edge_modes() -> tuple[str, ...]:
+    configured = os.getenv("MAYBEFLAT_WARM_EDGE_MODES", "").strip()
+    if not configured:
+        return (DEFAULT_WARM_EDGE_MODE,)
+
+    selected = [
+        value.strip()
+        for value in configured.split(",")
+        if value.strip() in EDGE_MODES
+    ]
+    return tuple(selected) if selected else (DEFAULT_WARM_EDGE_MODE,)
+
+
+def _configured_scene_details(
+    env_name: str,
+    default_values: tuple[str, ...],
+) -> tuple[str, ...]:
+    configured = os.getenv(env_name, "").strip()
+    if not configured:
+        return default_values
+
+    selected = [
+        value.strip()
+        for value in configured.split(",")
+        if value.strip() in {"mobile", "desktop", "full"}
+    ]
+    return tuple(selected) if selected else default_values
+
+
+def _configured_warm_max_zoom() -> int:
+    configured = os.getenv("MAYBEFLAT_WARM_MAX_ZOOM", "").strip()
+    if not configured:
+        return DEFAULT_WARM_MAX_ZOOM
+
+    try:
+        parsed = int(configured)
+    except ValueError:
+        return DEFAULT_WARM_MAX_ZOOM
+    return max(0, min(parsed, MAX_TILE_ZOOM))
+
+
+def _warm_marker_path(
+    edge_modes: tuple[str, ...],
+    max_zoom: int,
+) -> Path:
+    edge_slug = "-".join(edge_modes)
+    return _tile_cache_root() / f".warm-{SHARED_TILE_SET}-{edge_slug}-z{max_zoom}.done"
 
 
 def _shape_bounds(shape: MapShapeResponse) -> ShapeBounds:

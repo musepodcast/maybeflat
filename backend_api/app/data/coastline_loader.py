@@ -16,6 +16,15 @@ STATE_BOUNDARY_FILL = "#00000000"
 STATE_BOUNDARY_STROKE = "#557C8B"
 TIMEZONE_FILL = "#00000000"
 TIMEZONE_STROKE = "#5B7381"
+STATE_LABEL_COUNTRY_CODES = {
+    "AR",
+    "AU",
+    "BR",
+    "CA",
+    "IN",
+    "MX",
+    "US",
+}
 DETAIL_POINT_LIMITS = {
     "mobile": 180,
     "desktop": 1400,
@@ -112,6 +121,83 @@ def load_state_boundary_shapes(detail: str = "desktop") -> tuple[list[dict[str, 
         return [], dataset_path.name, False
 
     return shapes, dataset_path.name, True
+
+
+def load_state_boundary_labels() -> tuple[list[dict[str, object]], str, bool]:
+    dataset_path = get_state_boundary_dataset_path()
+    if not dataset_path.exists():
+        return [], "unavailable", False
+
+    with dataset_path.open("r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+
+    payload_type = raw.get("type")
+    if payload_type == "FeatureCollection":
+        features = raw.get("features", [])
+    elif payload_type == "Feature":
+        features = [raw]
+    else:
+        features = []
+
+    labels: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for feature in features:
+        properties = feature.get("properties") or {}
+        iso_a2 = str(properties.get("iso_a2") or "").upper()
+        if iso_a2 not in STATE_LABEL_COUNTRY_CODES:
+            continue
+
+        latitude = properties.get("latitude")
+        longitude = properties.get("longitude")
+        if latitude is None or longitude is None:
+            continue
+
+        try:
+            latitude_value = float(latitude)
+            longitude_value = float(longitude)
+        except (TypeError, ValueError):
+            continue
+
+        label_name = (
+            properties.get("name_en")
+            or properties.get("name")
+            or properties.get("postal")
+            or properties.get("iso_3166_2")
+        )
+        if not label_name:
+            continue
+
+        normalized_name = _normalize_label_name(str(label_name).strip())
+        if not normalized_name:
+            continue
+
+        dedupe_key = (iso_a2, normalized_name)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        labels.append(
+            {
+                "name": normalized_name,
+                "latitude": latitude_value,
+                "longitude": longitude_value,
+                "layer": "state",
+                "min_scale": 3.6,
+            }
+        )
+
+    return labels, dataset_path.name, bool(labels)
+
+
+def _normalize_label_name(value: str) -> str:
+    if any(marker in value for marker in ("Ã", "Â", "Ð", "Ø", "à")):
+        try:
+            repaired = value.encode("latin-1").decode("utf-8")
+            if repaired:
+                return repaired
+        except UnicodeError:
+            pass
+    return value
 
 
 def load_timezone_boundary_shapes(

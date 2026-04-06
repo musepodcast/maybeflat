@@ -28,6 +28,12 @@ if [[ ! -f .env.production ]]; then
   exit 1
 fi
 
+get_config_value() {
+  local key="$1"
+  local path="$2"
+  awk -F= -v target="$key" '$1 == target {sub(/^[[:space:]]+/, "", $2); print $2; exit}' "$path"
+}
+
 mkdir -p var/log/caddy
 
 pushd app_flutter >/dev/null
@@ -37,3 +43,28 @@ popd >/dev/null
 
 "${DOCKER_COMPOSE[@]}" --env-file .env.production up -d --build --remove-orphans
 "${DOCKER_COMPOSE[@]}" --env-file .env.production ps
+
+PRERENDER_TILES="$(get_config_value MAYBEFLAT_PRERENDER_TILES .env.production || true)"
+if [[ -z "${PRERENDER_TILES}" ]]; then
+  PRERENDER_TILES="1"
+fi
+
+if [[ ! "${PRERENDER_TILES}" =~ ^(0|false|FALSE|False|no|NO|No)$ ]]; then
+  PRERENDER_MAX_ZOOM="$(get_config_value MAYBEFLAT_PRERENDER_MAX_ZOOM .env.production || true)"
+  if [[ -z "${PRERENDER_MAX_ZOOM}" ]]; then
+    PRERENDER_MAX_ZOOM="6"
+  fi
+
+  PRERENDER_EDGE_MODES="$(get_config_value MAYBEFLAT_PRERENDER_EDGE_MODES .env.production || true)"
+  if [[ -z "${PRERENDER_EDGE_MODES}" ]]; then
+    PRERENDER_EDGE_MODES="coastline,country,both"
+  fi
+
+  echo "Pre-rendering shared tile pyramid (max zoom ${PRERENDER_MAX_ZOOM}, edge modes ${PRERENDER_EDGE_MODES})..."
+  "${DOCKER_COMPOSE[@]}" --env-file .env.production exec -T api \
+    python generate_tiles.py --max-zoom "${PRERENDER_MAX_ZOOM}" --edge-modes "${PRERENDER_EDGE_MODES}"
+fi
+
+echo
+echo "Production stack started."
+echo "Local check: https://127.0.0.1"

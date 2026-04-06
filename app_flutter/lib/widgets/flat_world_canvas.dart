@@ -29,7 +29,8 @@ class MapTapLocation {
 const double _innerWorldMinLatitude = -60;
 const double _innerWorldRadius = 0.85;
 const double _outerRingRadius = 1.0;
-const String _tileCacheVersion = '20260329-ice-ring';
+const String _tileCacheVersion = '20260405-shared-v1';
+const String _sharedTileSet = 'shared-v1';
 
 double _latitudeToRadiusRatio(double latitude) {
   if (latitude >= _innerWorldMinLatitude) {
@@ -169,17 +170,25 @@ double _layerLabelFontSize(String layer, double viewScale) {
   final baseSize = switch (layer) {
     'continent' => 16.5,
     'country' => 13.0,
+    'state' => 9.8,
+    'capital_world' => 10.6,
+    'city_world' => 9.6,
     'city_major' => 11.0,
     'city_regional' => 10.0,
     'city_local' => 9.0,
+    'city_detail' => 8.4,
     _ => 11.0,
   };
   final minSize = switch (layer) {
     'continent' => 10.2,
     'country' => 8.5,
+    'state' => 6.8,
+    'capital_world' => 7.0,
+    'city_world' => 6.4,
     'city_major' => 7.5,
     'city_regional' => 6.8,
     'city_local' => 6.2,
+    'city_detail' => 5.8,
     _ => 7.0,
   };
   final scaledSize = baseSize / math.pow(viewScale.clamp(1.0, 24.0), 0.18);
@@ -207,6 +216,38 @@ double _screenStableRadius(
 
 bool _isCityLayer(String layer) => layer.startsWith('city');
 
+bool _isCapitalLayer(String layer) => layer.startsWith('capital');
+
+bool _isPointLabelLayer(String layer) =>
+    _isCityLayer(layer) || _isCapitalLayer(layer);
+
+double _cityLabelDotRadius(String layer, double viewScale) {
+  final baseRadius = switch (layer) {
+    'city_world' => 1.0,
+    'city_major' => 1.6,
+    'city_regional' => 1.2,
+    'city_local' => 0.95,
+    'city_detail' => 0.72,
+    _ => 1.0,
+  };
+  final minRadius = switch (layer) {
+    'city_world' => 0.45,
+    'city_major' => 0.7,
+    'city_regional' => 0.55,
+    'city_local' => 0.42,
+    'city_detail' => 0.32,
+    _ => 0.45,
+  };
+  final scaledRadius =
+      baseRadius / math.pow(viewScale.clamp(1.0, 24.0), 0.82);
+  return scaledRadius.clamp(minRadius, baseRadius).toDouble();
+}
+
+double _capitalLabelStarRadius(double viewScale) {
+  final scaledRadius = 1.25 / math.pow(viewScale.clamp(1.0, 24.0), 0.78);
+  return scaledRadius.clamp(0.55, 1.25).toDouble();
+}
+
 List<int> _buildTimeZoneOffsets() {
   return List<int>.generate(24, (index) => index - 12, growable: false);
 }
@@ -233,6 +274,22 @@ Offset _screenOffsetToScene(
 
 double _mapRadiusScaleForSize(Size size) {
   return size.width < 560 ? 0.935 : 0.94;
+}
+
+bool _rectIntersectsDisk(Rect rect, Offset center, double radius) {
+  final nearestX = rect.left > center.dx
+      ? rect.left
+      : rect.right < center.dx
+          ? rect.right
+          : center.dx;
+  final nearestY = rect.top > center.dy
+      ? rect.top
+      : rect.bottom < center.dy
+          ? rect.bottom
+          : center.dy;
+  final deltaX = center.dx - nearestX;
+  final deltaY = center.dy - nearestY;
+  return (deltaX * deltaX) + (deltaY * deltaY) <= (radius * radius);
 }
 
 class _GridHoverData {
@@ -288,6 +345,31 @@ Offset _projectMapPoint(Offset center, double radius, double x, double y) {
     center.dx + x * radius,
     center.dy + y * radius,
   );
+}
+
+Path _buildStarPath(
+  Offset center,
+  double outerRadius, {
+  double innerRadiusFactor = 0.46,
+  int points = 5,
+}) {
+  final path = Path();
+  final innerRadius = outerRadius * innerRadiusFactor;
+  for (var pointIndex = 0; pointIndex < points * 2; pointIndex += 1) {
+    final radius = pointIndex.isEven ? outerRadius : innerRadius;
+    final angle = (-math.pi / 2) + (pointIndex * math.pi / points);
+    final point = Offset(
+      center.dx + math.cos(angle) * radius,
+      center.dy + math.sin(angle) * radius,
+    );
+    if (pointIndex == 0) {
+      path.moveTo(point.dx, point.dy);
+    } else {
+      path.lineTo(point.dx, point.dy);
+    }
+  }
+  path.close();
+  return path;
 }
 
 List<Offset> _projectMapRing(
@@ -385,6 +467,28 @@ class _OverlayAnchorCache {
   final List<MapLabel> sourceLabels;
   final List<Offset> markerPoints;
   final List<Offset> labelPoints;
+}
+
+class _SelectedShapeTarget {
+  const _SelectedShapeTarget({
+    required this.name,
+    required this.displayName,
+    required this.role,
+  });
+
+  final String name;
+  final String displayName;
+  final String role;
+}
+
+String _selectionDisplayName(String value) {
+  final multipartSuffix = RegExp(r'^(.*)\s+\d+$');
+  final match = multipartSuffix.firstMatch(value.trim());
+  if (match == null) {
+    return value.trim();
+  }
+  final baseName = match.group(1)?.trim();
+  return (baseName == null || baseName.isEmpty) ? value.trim() : baseName;
 }
 
 Offset _resolveDisplayPointForEdgeMode({
@@ -518,7 +622,6 @@ class FlatWorldCanvas extends StatefulWidget {
   const FlatWorldCanvas({
     super.key,
     required this.tileBaseUrl,
-    required this.tileDetailLevel,
     required this.markers,
     required this.shapes,
     required this.labels,
@@ -539,10 +642,10 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.onMapPointPicked,
     required this.onInteractionChanged,
     required this.onViewScaleChanged,
+    required this.onVisibleMapBoundsChanged,
   });
 
   final String tileBaseUrl;
-  final String tileDetailLevel;
   final List<PlaceMarker> markers;
   final List<MapShape> shapes;
   final List<MapLabel> labels;
@@ -563,6 +666,7 @@ class FlatWorldCanvas extends StatefulWidget {
   final ValueChanged<MapTapLocation>? onMapPointPicked;
   final ValueChanged<bool>? onInteractionChanged;
   final ValueChanged<double>? onViewScaleChanged;
+  final ValueChanged<Rect>? onVisibleMapBoundsChanged;
 
   @override
   State<FlatWorldCanvas> createState() => _FlatWorldCanvasState();
@@ -579,6 +683,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   double _rotationRadians = 0;
   double _labelScale = 1;
   double _viewScale = 1;
+  Offset _lastViewTranslation = Offset.zero;
   _GridHoverData? _hoveredGridPoint;
   bool _isInteracting = false;
   final Set<String> _prefetchedTileKeys = <String>{};
@@ -588,6 +693,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   _OverlayAnchorCache? _overlayAnchorCache;
   AstronomySnapshot? _previousAstronomySnapshot;
   bool _hasInitializedView = false;
+  _SelectedShapeTarget? _selectedShape;
+
+  bool get _shouldAnimateAstronomy =>
+      widget.astronomySnapshot != null &&
+      (widget.showSunPath || widget.showMoonPath);
 
   @override
   void initState() {
@@ -595,13 +705,19 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     _astronomyAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 6),
-    )..repeat();
+    );
     _astronomyTransitionController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
       value: 1,
     );
     _transformationController.addListener(_handleTransformChanged);
+    final initialMatrix = _transformationController.value;
+    _lastViewTranslation = Offset(
+      initialMatrix.storage[12],
+      initialMatrix.storage[13],
+    );
+    _syncAstronomyAnimation();
   }
 
   @override
@@ -610,6 +726,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     if (!identical(oldWidget.shapes, widget.shapes)) {
       _cachedSceneSize = null;
       _overlayAnchorCache = null;
+      _selectedShape = null;
     }
     if (oldWidget.astronomySnapshot != widget.astronomySnapshot &&
         oldWidget.astronomySnapshot != null &&
@@ -620,6 +737,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       _previousAstronomySnapshot = null;
       _astronomyTransitionController.value = 1;
     }
+    _syncAstronomyAnimation();
   }
 
   @override
@@ -679,10 +797,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                 constraints.biggest,
               );
               final overlayAnchors = _ensureOverlayAnchorCache(projectedScene);
-              final hasTileBase = widget.shapes.isNotEmpty &&
-                  (widget.tileDetailLevel == 'mobile' ||
-                      widget.tileDetailLevel == 'desktop' ||
-                      widget.tileDetailLevel == 'full');
+              final hasTileBase = widget.shapes.isNotEmpty;
               final tileZoom = _tileZoomForViewScale(_viewScale);
               final visibleSceneRect = _visibleSceneRect(constraints.biggest);
               final tileRange = _visibleTileRange(
@@ -693,6 +808,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
               if (hasTileBase && !_isInteracting) {
                 _scheduleTilePrefetch(
                   context: context,
+                  isCompactViewport: isCompactViewport,
                   tileZoom: tileZoom,
                   tileRange: tileRange,
                 );
@@ -729,7 +845,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                         });
                       }
                     },
-                    child: Listener(
+                      child: Listener(
                       onPointerSignal: (pointerSignal) {
                         if (pointerSignal is PointerScrollEvent) {
                           _handleScrollZoom(
@@ -738,35 +854,45 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                           );
                         }
                       },
-                      child: InteractiveViewer(
-                        transformationController: _transformationController,
-                        boundaryMargin: const EdgeInsets.all(240),
-                        minScale: _minScaleForViewport(constraints.biggest),
-                        maxScale: _maxScale,
-                        onInteractionStart: (_) => _beginInteraction(),
-                        onInteractionEnd: (_) => _scheduleInteractionEnd(),
-                        panEnabled: true,
-                        scaleEnabled: true,
-                        trackpadScrollCausesScale: true,
-                        child: RepaintBoundary(
-                          child: SizedBox(
-                            width: constraints.maxWidth,
-                            height: constraints.maxHeight,
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.deferToChild,
+                        onTapUp: widget.activePickLabel == null
+                            ? (details) => _handleCanvasTap(
+                                  details.localPosition,
+                                  projectedScene,
+                                )
+                            : null,
+                        child: InteractiveViewer(
+                          transformationController: _transformationController,
+                          boundaryMargin: const EdgeInsets.all(240),
+                          minScale: _minScaleForViewport(constraints.biggest),
+                          maxScale: _maxScale,
+                          onInteractionStart: (_) => _beginInteraction(),
+                          onInteractionEnd: (_) => _scheduleInteractionEnd(),
+                          panEnabled: true,
+                          scaleEnabled: true,
+                          trackpadScrollCausesScale: true,
+                          child: RepaintBoundary(
+                            child: SizedBox(
+                              width: constraints.maxWidth,
+                              height: constraints.maxHeight,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
                                 if (hasTileBase)
                                   RepaintBoundary(
                                     child: ClipPath(
                                       clipper: const _MapDiskClipper(),
                                       child: _MapTileLayer(
                                         baseUrl: widget.tileBaseUrl,
-                                        detailLevel: widget.tileDetailLevel,
                                         edgeMode: widget.edgeRenderMode,
                                         tileVersion: _tileCacheVersion,
                                         viewportSize: constraints.biggest,
                                         tileZoom: tileZoom,
                                         tileRange: tileRange,
+                                        showParentFallback:
+                                            !isCompactViewport &&
+                                            !_isInteracting,
                                       ),
                                     ),
                                   ),
@@ -781,50 +907,57 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                       ),
                                     ),
                                   ),
-                                RepaintBoundary(
-                                  child: CustomPaint(
-                                    painter: _FlatWorldPainter(
-                                      repaint: Listenable.merge([
-                                        _astronomyAnimationController,
-                                        _astronomyTransitionController,
-                                      ]),
-                                      projectedScene: projectedScene,
-                                      markerAnchorPoints:
-                                          overlayAnchors.markerPoints,
-                                      labelAnchorPoints:
-                                          overlayAnchors.labelPoints,
-                                      markers: widget.markers,
-                                      labels: widget.labels,
-                                      showGrid: widget.showGrid,
-                                      showTimeZones: widget.showTimeZones,
-                                      useRealTimeZones: widget.useRealTimeZones,
-                                      gridStepDegrees: widget.gridStepDegrees,
-                                      edgeRenderMode: widget.edgeRenderMode,
-                                      showLabels: widget.showLabels,
-                                      showShapeLabels: widget.showShapeLabels,
-                                      showStateBoundaries:
-                                          widget.showStateBoundaries,
-                                      previousAstronomySnapshot:
-                                          _previousAstronomySnapshot,
-                                      astronomySnapshot:
-                                          widget.astronomySnapshot,
-                                      astronomyTransitionValue:
-                                          _astronomyTransitionController.value,
-                                      showSunPath: widget.showSunPath,
-                                      showMoonPath: widget.showMoonPath,
-                                      astronomyObserverName:
-                                          widget.astronomyObserverName,
-                                      routePoints: widget.routePoints,
-                                      labelScale: _labelScale,
-                                      viewScale: _viewScale,
-                                      viewRotationRadians: _rotationRadians,
-                                      animationValue:
-                                          _astronomyAnimationController.value,
-                                      isInteracting: _isInteracting,
+                                  RepaintBoundary(
+                                    child: CustomPaint(
+                                      painter: _FlatWorldPainter(
+                                        repaint: Listenable.merge([
+                                          _astronomyAnimationController,
+                                          _astronomyTransitionController,
+                                        ]),
+                                        projectedScene: projectedScene,
+                                        visibleSceneRect: visibleSceneRect,
+                                        selectedShape: _selectedShape,
+                                        markerAnchorPoints:
+                                            overlayAnchors.markerPoints,
+                                        labelAnchorPoints:
+                                            overlayAnchors.labelPoints,
+                                        markers: widget.markers,
+                                        labels: widget.labels,
+                                        showGrid: widget.showGrid,
+                                        showTimeZones: widget.showTimeZones,
+                                        useRealTimeZones:
+                                            widget.useRealTimeZones,
+                                        gridStepDegrees: widget.gridStepDegrees,
+                                        edgeRenderMode: widget.edgeRenderMode,
+                                        showLabels: widget.showLabels,
+                                        showShapeLabels: widget.showShapeLabels,
+                                        showStateBoundaries:
+                                            widget.showStateBoundaries,
+                                        previousAstronomySnapshot:
+                                            _previousAstronomySnapshot,
+                                        astronomySnapshot:
+                                            widget.astronomySnapshot,
+                                        astronomyTransitionValue:
+                                            _astronomyTransitionController
+                                                .value,
+                                        showSunPath: widget.showSunPath,
+                                        showMoonPath: widget.showMoonPath,
+                                        astronomyObserverName:
+                                            widget.astronomyObserverName,
+                                        routePoints: widget.routePoints,
+                                        labelScale: _labelScale,
+                                        viewScale: _viewScale,
+                                        viewRotationRadians:
+                                            _rotationRadians,
+                                        animationValue:
+                                            _astronomyAnimationController
+                                                .value,
+                                        isInteracting: _isInteracting,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1001,7 +1134,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
         projectedLandRings: projectedScene.projectedLandRings,
         edgeRenderMode: widget.edgeRenderMode,
         viewScale: 1,
-        maxSnapDistanceInScreen: _isCityLayer(label.layer) ? 44 : 26,
+        maxSnapDistanceInScreen: _isPointLabelLayer(label.layer) ? 44 : 26,
       );
     }).toList(growable: false);
 
@@ -1060,6 +1193,41 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     return Rect.fromLTRB(left, top, right, bottom);
   }
 
+  Rect _visibleMapRect(Size viewportSize) {
+    final sceneTopLeft = _transformationController.toScene(Offset.zero);
+    final sceneTopRight = _transformationController.toScene(
+      Offset(viewportSize.width, 0),
+    );
+    final sceneBottomLeft = _transformationController.toScene(
+      Offset(0, viewportSize.height),
+    );
+    final sceneBottomRight = _transformationController.toScene(
+      Offset(viewportSize.width, viewportSize.height),
+    );
+    final center = viewportSize.center(Offset.zero);
+    final mapRadius =
+        (math.min(viewportSize.width, viewportSize.height) / 2) *
+        _mapRadiusScaleForSize(viewportSize);
+    final visibleCorners = [
+      sceneTopLeft,
+      sceneTopRight,
+      sceneBottomLeft,
+      sceneBottomRight,
+    ]
+        .map(
+          (point) => Offset(
+            (point.dx - center.dx) / mapRadius,
+            (point.dy - center.dy) / mapRadius,
+          ),
+        )
+        .toList(growable: false);
+    final left = visibleCorners.map((point) => point.dx).reduce(math.min);
+    final right = visibleCorners.map((point) => point.dx).reduce(math.max);
+    final top = visibleCorners.map((point) => point.dy).reduce(math.min);
+    final bottom = visibleCorners.map((point) => point.dy).reduce(math.max);
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
   _TileRange _visibleTileRange({
     required Size viewportSize,
     required Rect visibleSceneRect,
@@ -1101,9 +1269,14 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
 
   void _scheduleTilePrefetch({
     required BuildContext context,
+    required bool isCompactViewport,
     required int tileZoom,
     required _TileRange tileRange,
   }) {
+    if (isCompactViewport || _isInteracting) {
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -1124,8 +1297,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
           if (isVisibleTile) {
             continue;
           }
-          final key =
-              '${widget.tileDetailLevel}:$edgeMode:$tileZoom:$tileX:$tileY';
+          final key = '$_sharedTileSet:$edgeMode:$tileZoom:$tileX:$tileY';
           if (_prefetchedTileKeys.contains(key)) {
             continue;
           }
@@ -1133,7 +1305,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
           unawaited(
             precacheImage(
               NetworkImage(
-                '${widget.tileBaseUrl}/map/tiles/${widget.tileDetailLevel}/$edgeMode/$tileZoom/$tileX/$tileY.png?v=$_tileCacheVersion',
+                '${widget.tileBaseUrl}/map/tiles/$edgeMode/$tileZoom/$tileX/$tileY.png?v=$_tileCacheVersion',
               ),
               context,
               onError: (_, __) {},
@@ -1304,7 +1476,13 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
         ..translateByDouble(horizontalInset, verticalInset, 0, 1)
         ..scaleByDouble(scale, scale, 1, 1);
     });
+    final currentMatrix = _transformationController.value;
+    _lastViewTranslation = Offset(
+      currentMatrix.storage[12],
+      currentMatrix.storage[13],
+    );
     widget.onViewScaleChanged?.call(scale);
+    widget.onVisibleMapBoundsChanged?.call(_visibleMapRect(viewportSize));
   }
 
   void _beginInteraction() {
@@ -1331,15 +1509,23 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   }
 
   void _handleTransformChanged() {
-    final scale = _transformationController.value.getMaxScaleOnAxis();
-    if (((scale - _labelScale).abs() > 0.04 ||
-            (scale - _viewScale).abs() > 0.04) &&
-        mounted) {
+    final matrix = _transformationController.value;
+    final scale = matrix.getMaxScaleOnAxis();
+    final translation = Offset(matrix.storage[12], matrix.storage[13]);
+    final shouldRebuild = (scale - _labelScale).abs() > 0.04 ||
+        (scale - _viewScale).abs() > 0.04 ||
+        (translation - _lastViewTranslation).distance > 8;
+    if (shouldRebuild && mounted) {
       setState(() {
         _labelScale = scale;
         _viewScale = scale;
+        _lastViewTranslation = translation;
       });
       widget.onViewScaleChanged?.call(scale);
+      final viewportSize = _latestViewportSize;
+      if (viewportSize != null) {
+        widget.onVisibleMapBoundsChanged?.call(_visibleMapRect(viewportSize));
+      }
     }
   }
 
@@ -1403,6 +1589,78 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     );
   }
 
+  void _handleCanvasTap(
+    Offset viewportPosition,
+    _ProjectedSceneCache projectedScene,
+  ) {
+    final nextSelection = _resolveShapeSelection(
+      viewportPosition,
+      projectedScene,
+    );
+    setState(() {
+      _selectedShape = nextSelection;
+    });
+  }
+
+  _SelectedShapeTarget? _resolveShapeSelection(
+    Offset viewportPosition,
+    _ProjectedSceneCache projectedScene,
+  ) {
+    final scenePoint = _transformationController.toScene(viewportPosition);
+    if (!projectedScene.landClipPath.contains(scenePoint)) {
+      return null;
+    }
+
+    if (widget.showStateBoundaries) {
+      final selectedState = _findShapeAtScenePoint(
+        projectedScene.stateBoundaryEntries,
+        scenePoint,
+        role: 'state_boundary',
+      );
+      if (selectedState != null) {
+        return selectedState;
+      }
+    }
+
+    return _findShapeAtScenePoint(
+      projectedScene.boundaryEntries,
+      scenePoint,
+      role: 'boundary',
+    );
+  }
+
+  _SelectedShapeTarget? _findShapeAtScenePoint(
+    List<_ProjectedShapeEntry> entries,
+    Offset scenePoint, {
+    required String role,
+  }) {
+    _ProjectedShapeEntry? selectedEntry;
+    double? selectedArea;
+    for (final entry in entries) {
+      if (!entry.hasClosedRing || !entry.bounds.inflate(2).contains(scenePoint)) {
+        continue;
+      }
+      if (!entry.path.contains(scenePoint)) {
+        continue;
+      }
+      final area = entry.bounds.width * entry.bounds.height;
+      if (selectedArea == null || area < selectedArea) {
+        selectedEntry = entry;
+        selectedArea = area;
+      }
+    }
+
+    if (selectedEntry == null) {
+      return null;
+    }
+
+    return _SelectedShapeTarget(
+      name: _selectionDisplayName(selectedEntry.shape.name),
+      displayName: _selectionDisplayName(selectedEntry.shape.name),
+      role: role,
+    );
+  }
+
   MapTapLocation? _resolveTapLocation(
       Offset viewportPosition, Size canvasSize) {
     final scenePoint = _transformationController.toScene(viewportPosition);
@@ -1437,6 +1695,22 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       y: normalizedY,
       zone: radiusRatio <= _innerWorldRadius ? 'inner_world' : 'antarctic_ring',
     );
+  }
+
+  void _syncAstronomyAnimation() {
+    if (_shouldAnimateAstronomy) {
+      if (!_astronomyAnimationController.isAnimating) {
+        _astronomyAnimationController.repeat();
+      }
+      return;
+    }
+
+    if (_astronomyAnimationController.isAnimating) {
+      _astronomyAnimationController.stop();
+    }
+    if (_astronomyAnimationController.value != 0) {
+      _astronomyAnimationController.value = 0;
+    }
   }
 
   @override
@@ -1538,21 +1812,21 @@ class _ZoomControls extends StatelessWidget {
 class _MapTileLayer extends StatelessWidget {
   const _MapTileLayer({
     required this.baseUrl,
-    required this.detailLevel,
     required this.edgeMode,
     required this.tileVersion,
     required this.viewportSize,
     required this.tileZoom,
     required this.tileRange,
+    required this.showParentFallback,
   });
 
   final String baseUrl;
-  final String detailLevel;
   final EdgeRenderMode edgeMode;
   final String tileVersion;
   final Size viewportSize;
   final int tileZoom;
   final _TileRange tileRange;
+  final bool showParentFallback;
 
   @override
   Widget build(BuildContext context) {
@@ -1562,31 +1836,46 @@ class _MapTileLayer extends StatelessWidget {
     final edgeSlug = _edgeModeSlug(edgeMode);
     final centerTileX = (tileRange.minX + tileRange.maxX) / 2;
     final centerTileY = (tileRange.minY + tileRange.maxY) / 2;
+    final diskCenter = Offset(viewportSize.width / 2, viewportSize.height / 2);
+    final diskRadius =
+        math.min(viewportSize.width, viewportSize.height) *
+        (_mapRadiusScaleForSize(viewportSize) / 2);
     final visibleTiles = <_TileVisualRequest>[
       for (var tileX = tileRange.minX; tileX <= tileRange.maxX; tileX += 1)
         for (var tileY = tileRange.minY; tileY <= tileRange.maxY; tileY += 1)
-          _TileVisualRequest(
-            x: tileX,
-            y: tileY,
-            priority: math.sqrt(
-              math.pow(tileX - centerTileX, 2) +
-                  math.pow(tileY - centerTileY, 2),
+          if (_rectIntersectsDisk(
+            Rect.fromLTWH(
+              tileX * tileWidth,
+              tileY * tileHeight,
+              tileWidth,
+              tileHeight,
             ),
-          ),
+            diskCenter,
+            diskRadius,
+          ))
+            _TileVisualRequest(
+              x: tileX,
+              y: tileY,
+              priority: math.sqrt(
+                math.pow(tileX - centerTileX, 2) +
+                    math.pow(tileY - centerTileY, 2),
+              ),
+            ),
     ]..sort((left, right) => left.priority.compareTo(right.priority));
+    final useParentFallback = showParentFallback && visibleTiles.length <= 12;
 
     return Stack(
       fit: StackFit.expand,
       children: [
         for (final tile in visibleTiles)
           Positioned(
+            key: ValueKey('tile-$edgeSlug-$tileZoom-${tile.x}-${tile.y}'),
             left: tile.x * tileWidth,
             top: tile.y * tileHeight,
             width: tileWidth,
             height: tileHeight,
             child: _TileImage(
               baseUrl: baseUrl,
-              detailLevel: detailLevel,
               edgeSlug: edgeSlug,
               tileVersion: tileVersion,
               tileZoom: tileZoom,
@@ -1594,6 +1883,7 @@ class _MapTileLayer extends StatelessWidget {
               tileY: tile.y,
               tileWidth: tileWidth,
               tileHeight: tileHeight,
+              showParentFallback: useParentFallback,
             ),
           ),
       ],
@@ -1625,7 +1915,6 @@ class _MapDiskClipper extends CustomClipper<Path> {
 class _TileImage extends StatelessWidget {
   const _TileImage({
     required this.baseUrl,
-    required this.detailLevel,
     required this.edgeSlug,
     required this.tileVersion,
     required this.tileZoom,
@@ -1633,10 +1922,10 @@ class _TileImage extends StatelessWidget {
     required this.tileY,
     required this.tileWidth,
     required this.tileHeight,
+    required this.showParentFallback,
   });
 
   final String baseUrl;
-  final String detailLevel;
   final String edgeSlug;
   final String tileVersion;
   final int tileZoom;
@@ -1644,18 +1933,18 @@ class _TileImage extends StatelessWidget {
   final int tileY;
   final double tileWidth;
   final double tileHeight;
+  final bool showParentFallback;
 
   @override
   Widget build(BuildContext context) {
     final tileUrl =
-        '$baseUrl/map/tiles/$detailLevel/$edgeSlug/$tileZoom/$tileX/$tileY.png?v=$tileVersion';
+        '$baseUrl/map/tiles/$edgeSlug/$tileZoom/$tileX/$tileY.png?v=$tileVersion';
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (tileZoom > 0)
+        if (showParentFallback && tileZoom > 0)
           _ParentTileFallback(
             baseUrl: baseUrl,
-            detailLevel: detailLevel,
             edgeSlug: edgeSlug,
             tileVersion: tileVersion,
             tileZoom: tileZoom,
@@ -1687,7 +1976,6 @@ class _TileImage extends StatelessWidget {
 class _ParentTileFallback extends StatelessWidget {
   const _ParentTileFallback({
     required this.baseUrl,
-    required this.detailLevel,
     required this.edgeSlug,
     required this.tileVersion,
     required this.tileZoom,
@@ -1698,7 +1986,6 @@ class _ParentTileFallback extends StatelessWidget {
   });
 
   final String baseUrl;
-  final String detailLevel;
   final String edgeSlug;
   final String tileVersion;
   final int tileZoom;
@@ -1715,7 +2002,7 @@ class _ParentTileFallback extends StatelessWidget {
     final offsetX = (tileX % 2) * tileWidth;
     final offsetY = (tileY % 2) * tileHeight;
     final parentUrl =
-        '$baseUrl/map/tiles/$detailLevel/$edgeSlug/$parentZoom/$parentX/$parentY.png?v=$tileVersion';
+        '$baseUrl/map/tiles/$edgeSlug/$parentZoom/$parentX/$parentY.png?v=$tileVersion';
 
     return ClipRect(
       child: Transform.translate(
@@ -1864,6 +2151,8 @@ class _FlatWorldPainter extends CustomPainter {
   _FlatWorldPainter({
     super.repaint,
     required this.projectedScene,
+    required this.visibleSceneRect,
+    required this.selectedShape,
     required this.markerAnchorPoints,
     required this.labelAnchorPoints,
     required this.markers,
@@ -1891,6 +2180,8 @@ class _FlatWorldPainter extends CustomPainter {
   });
 
   final _ProjectedSceneCache projectedScene;
+  final Rect visibleSceneRect;
+  final _SelectedShapeTarget? selectedShape;
   final List<Offset> markerAnchorPoints;
   final List<Offset> labelAnchorPoints;
   final List<PlaceMarker> markers;
@@ -1951,6 +2242,8 @@ class _FlatWorldPainter extends CustomPainter {
       _paintStateBoundaries(canvas);
     }
 
+    _paintSelectedShapeHighlight(canvas);
+
     if (showLabels) {
       _paintLayerLabels(
         canvas,
@@ -1960,6 +2253,8 @@ class _FlatWorldPainter extends CustomPainter {
         projectedScene.projectedLandRings,
       );
     }
+
+    _paintSelectedShapeCallout(canvas);
 
     _paintMeasurementOverlay(canvas, center, mapRadius);
 
@@ -2339,6 +2634,9 @@ class _FlatWorldPainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(projectedScene.landClipPath);
     for (final entry in projectedScene.stateBoundaryEntries) {
+      if (!entry.bounds.overlaps(visibleSceneRect.inflate(24))) {
+        continue;
+      }
       final strokePaint = Paint()
         ..color = entry.shape.strokeColor.withAlpha(isInteracting ? 96 : 124)
         ..style = PaintingStyle.stroke
@@ -2353,6 +2651,116 @@ class _FlatWorldPainter extends CustomPainter {
       canvas.drawPath(entry.path, strokePaint);
     }
     canvas.restore();
+  }
+
+  void _paintSelectedShapeHighlight(Canvas canvas) {
+    final matchingEntries = _selectedShapeEntries();
+    if (matchingEntries.isEmpty) {
+      return;
+    }
+
+    final selection = selectedShape!;
+    canvas.save();
+    canvas.clipPath(projectedScene.landClipPath);
+    final fillPaint = Paint()
+      ..color = selection.role == 'state_boundary'
+          ? const Color(0x33458FB0)
+          : const Color(0x225B8C74)
+      ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = selection.role == 'state_boundary'
+          ? const Color(0xFF2C6D8E)
+          : const Color(0xFF2C6A59)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _screenStableRadius(2.1, viewScale, minRadius: 0.9)
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    for (final entry in matchingEntries) {
+      canvas.drawPath(entry.path, fillPaint);
+      canvas.drawPath(entry.path, strokePaint);
+    }
+    canvas.restore();
+  }
+
+  void _paintSelectedShapeCallout(Canvas canvas) {
+    final matchingEntries = _selectedShapeEntries();
+    if (matchingEntries.isEmpty) {
+      return;
+    }
+
+    Rect combinedBounds = matchingEntries.first.bounds;
+    for (final entry in matchingEntries.skip(1)) {
+      combinedBounds = combinedBounds.expandToInclude(entry.bounds);
+    }
+
+    final anchor = Offset(
+      combinedBounds.center.dx.clamp(
+        visibleSceneRect.left + 40,
+        visibleSceneRect.right - 40,
+      ),
+      (combinedBounds.top - (18 / viewScale.clamp(1.0, 24.0))).clamp(
+        visibleSceneRect.top + 20,
+        visibleSceneRect.bottom - 20,
+      ),
+    );
+    final selection = selectedShape!;
+    final labelPainter = TextPainter(
+      text: TextSpan(
+        text: selection.displayName,
+        style: TextStyle(
+          color: const Color(0xFF0F1720),
+          fontSize: _layerLabelFontSize('state', viewScale),
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 180);
+    final backgroundRect = Rect.fromCenter(
+      center: anchor,
+      width: labelPainter.width + 18,
+      height: labelPainter.height + 10,
+    );
+    final background = RRect.fromRectAndRadius(
+      backgroundRect,
+      const Radius.circular(999),
+    );
+    final backgroundPaint = Paint()
+      ..color = selection.role == 'state_boundary'
+          ? const Color(0xE62C6D8E)
+          : const Color(0xE62C6A59);
+    _paintUprightLabel(
+      canvas: canvas,
+      center: anchor,
+      labelPainter: labelPainter,
+      background: background,
+      backgroundPaint: backgroundPaint,
+    );
+  }
+
+  List<_ProjectedShapeEntry> _selectedShapeEntries() {
+    final selection = selectedShape;
+    if (selection == null) {
+      return const <_ProjectedShapeEntry>[];
+    }
+
+    final entries = switch (selection.role) {
+      'state_boundary' => projectedScene.stateBoundaryEntries,
+      'boundary' => projectedScene.boundaryEntries,
+      _ => const <_ProjectedShapeEntry>[],
+    };
+    if (entries.isEmpty) {
+      return const <_ProjectedShapeEntry>[];
+    }
+
+    return entries
+        .where(
+          (entry) =>
+              _selectionDisplayName(entry.shape.name) == selection.name &&
+              entry.hasClosedRing &&
+              entry.bounds.overlaps(visibleSceneRect.inflate(32)),
+        )
+        .toList(growable: false);
   }
 
   Offset _projectLatLon(
@@ -2772,10 +3180,18 @@ class _FlatWorldPainter extends CustomPainter {
     Path landClipPath,
     List<List<Offset>> projectedLandRings,
   ) {
+    final scenePadding = 26 / viewScale.clamp(1.0, 24.0);
+    final paddedVisibleSceneRect = visibleSceneRect.inflate(scenePadding);
+    final placedLabelRects = <Rect>[];
+
     for (var labelIndex = 0; labelIndex < labels.length; labelIndex += 1) {
       final label = labels[labelIndex];
       if (isInteracting &&
-          (label.layer == 'city_regional' || label.layer == 'city_local')) {
+          (label.layer == 'capital_world' ||
+              label.layer == 'city_world' ||
+              label.layer == 'city_regional' ||
+              label.layer == 'city_local' ||
+              label.layer == 'city_detail')) {
         continue;
       }
       if (label.minScale > labelScale) {
@@ -2788,9 +3204,11 @@ class _FlatWorldPainter extends CustomPainter {
               originalPoint: _project(center, radius, label.x, label.y),
               landClipPath: landClipPath,
               projectedLandRings: projectedLandRings,
-              maxSnapDistanceInScreen: _isCityLayer(label.layer) ? 44 : 26,
+              maxSnapDistanceInScreen:
+                  _isPointLabelLayer(label.layer) ? 44 : 26,
             );
       final isCityLabel = _isCityLayer(label.layer);
+      final isCapitalLabel = _isCapitalLayer(label.layer);
       final labelFontSize = _layerLabelFontSize(label.layer, viewScale);
       final style = switch (label.layer) {
         'continent' => TextStyle(
@@ -2804,6 +3222,23 @@ class _FlatWorldPainter extends CustomPainter {
             fontSize: labelFontSize,
             fontWeight: FontWeight.w800,
             letterSpacing: 0.4,
+          ),
+        'state' => TextStyle(
+            color: Color(0xFF173042),
+            fontSize: labelFontSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.15,
+          ),
+        'capital_world' => TextStyle(
+            color: Color(0xFF173042),
+            fontSize: labelFontSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.15,
+          ),
+        'city_world' => TextStyle(
+            color: Color(0xFF173042),
+            fontSize: labelFontSize,
+            fontWeight: FontWeight.w700,
           ),
         'city_major' => TextStyle(
             color: Color(0xFF173042),
@@ -2820,6 +3255,11 @@ class _FlatWorldPainter extends CustomPainter {
             fontSize: labelFontSize,
             fontWeight: FontWeight.w700,
           ),
+        'city_detail' => TextStyle(
+            color: Color(0xFF173042),
+            fontSize: labelFontSize,
+            fontWeight: FontWeight.w700,
+          ),
         _ => TextStyle(
             color: Color(0xFF173042),
             fontSize: labelFontSize,
@@ -2827,22 +3267,64 @@ class _FlatWorldPainter extends CustomPainter {
           ),
       };
 
-      final maxWidth = label.layer == 'continent' ? 170.0 : 130.0;
+      final maxWidth = switch (label.layer) {
+        'continent' => 170.0,
+        'capital_world' => 120.0,
+        'city_world' => 110.0,
+        _ => 130.0,
+      };
       final textPainter = TextPainter(
         text: TextSpan(text: label.name, style: style),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: maxWidth);
 
+      final collisionRect = _labelCollisionRect(
+        point: point,
+        label: label,
+        textPainter: textPainter,
+      );
+      if (!collisionRect.overlaps(paddedVisibleSceneRect)) {
+        continue;
+      }
+      final hasCollision = placedLabelRects.any(
+        (placedRect) => placedRect.overlaps(collisionRect),
+      );
+      if (hasCollision) {
+        continue;
+      }
+      placedLabelRects.add(collisionRect.inflate(2 / viewScale.clamp(1.0, 24.0)));
+
+      if (isCapitalLabel) {
+        final starRadius = _capitalLabelStarRadius(viewScale);
+        final starPath = _buildStarPath(point, starRadius);
+        final starFillPaint = Paint()..color = const Color(0xFFF2C14E);
+        final starStrokePaint = Paint()
+          ..color = const Color(0xFF173042)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = _screenStableRadius(0.8, viewScale, minRadius: 0.35);
+        canvas.drawPath(starPath, starFillPaint);
+        canvas.drawPath(starPath, starStrokePaint);
+        _paintAnchoredPointLabel(
+          canvas: canvas,
+          anchorPoint: point,
+          labelPainter: textPainter,
+          labelOffsetInScreen: const Offset(12, -12),
+          dotRadius: starRadius,
+          dotPaint: starFillPaint,
+          leaderColor: const Color(0xAA173042),
+        );
+        continue;
+      }
+
       if (isCityLabel) {
-        final cityDotRadius =
-            _screenStableRadius(2.2, viewScale, minRadius: 0.95);
+        final cityDotRadius = _cityLabelDotRadius(label.layer, viewScale);
         final cityDotPaint = Paint()..color = const Color(0xFF173042);
         canvas.drawCircle(point, cityDotRadius, cityDotPaint);
         _paintAnchoredPointLabel(
           canvas: canvas,
           anchorPoint: point,
           labelPainter: textPainter,
-          labelOffsetInScreen: const Offset(13, -13),
+          labelOffsetInScreen: const Offset(11, -11),
           dotRadius: cityDotRadius,
           dotPaint: cityDotPaint,
           leaderColor: const Color(0xAA173042),
@@ -2856,6 +3338,51 @@ class _FlatWorldPainter extends CustomPainter {
         labelPainter: textPainter,
       );
     }
+  }
+
+  Rect _labelCollisionRect({
+    required Offset point,
+    required MapLabel label,
+    required TextPainter textPainter,
+  }) {
+    final stableScale = _screenStableLabelScale(viewScale);
+    final labelSize = Size(
+      textPainter.width * stableScale,
+      textPainter.height * stableScale,
+    );
+    if (_isCapitalLayer(label.layer)) {
+      final offset = _screenOffsetToScene(const Offset(12, -12), viewScale);
+      final labelCenter = point + offset;
+      final textRect = Rect.fromCenter(
+        center: labelCenter,
+        width: labelSize.width,
+        height: labelSize.height,
+      );
+      final markerRect = Rect.fromCircle(
+        center: point,
+        radius: _capitalLabelStarRadius(viewScale) + (2 / viewScale),
+      );
+      return textRect.expandToInclude(markerRect);
+    }
+    if (_isCityLayer(label.layer)) {
+      final offset = _screenOffsetToScene(const Offset(11, -11), viewScale);
+      final labelCenter = point + offset;
+      final textRect = Rect.fromCenter(
+        center: labelCenter,
+        width: labelSize.width,
+        height: labelSize.height,
+      );
+      final markerRect = Rect.fromCircle(
+        center: point,
+        radius: _cityLabelDotRadius(label.layer, viewScale) + (1.5 / viewScale),
+      );
+      return textRect.expandToInclude(markerRect);
+    }
+    return Rect.fromCenter(
+      center: point,
+      width: labelSize.width,
+      height: labelSize.height,
+    );
   }
 
   void _paintMeasurementOverlay(
@@ -3041,6 +3568,8 @@ class _FlatWorldPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _FlatWorldPainter oldDelegate) {
     return oldDelegate.projectedScene != projectedScene ||
+        oldDelegate.visibleSceneRect != visibleSceneRect ||
+        oldDelegate.selectedShape != selectedShape ||
         oldDelegate.markers != markers ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.gridStepDegrees != gridStepDegrees ||

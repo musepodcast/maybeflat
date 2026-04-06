@@ -27,7 +27,6 @@ Internet
 - `.env.production.example`
 - `deploy_production.sh`
 - `deploy/systemd/maybeflat.service`
-- `.github/workflows/deploy-production.yml`
 - `deploy/firewall/apply_ufw_firewall.sh`
 - `deploy/firewall/preflight_ssh_access.sh`
 - `deploy/firewall/ufw_rollback_guard.sh`
@@ -70,6 +69,9 @@ That script will:
 1. build the Flutter web app with `MAYBEFLAT_API_BASE_URL=/api`
 2. build the FastAPI image
 3. start or update the Docker Compose stack
+4. pre-render the shared tile pyramid through zoom `6` by default
+
+You can tune deploy-time pre-rendering with `MAYBEFLAT_PRERENDER_TILES`, `MAYBEFLAT_PRERENDER_MAX_ZOOM`, and `MAYBEFLAT_PRERENDER_EDGE_MODES` in `.env.production`.
 
 ## Auto-Start After Reboot
 
@@ -131,35 +133,15 @@ git pull
 ./deploy_production.sh
 ```
 
-If you use the GitHub Actions deploy workflow, the server update is done for you over SSH.
+To backfill or extend the shared raster tile pyramid manually after deploy:
 
-## GitHub Actions Deployment
+```bash
+docker compose exec api python generate_tiles.py --max-zoom 6
+```
 
-The repo now includes `.github/workflows/deploy-production.yml`.
+That fills the same shared tile tree Caddy serves directly at `/api/map/tiles/{edge_mode}/{z}/{x}/{y}.png`.
 
-Create these GitHub Actions secrets before enabling it:
-
-- `DEPLOY_HOST`: VPS hostname or IP
-- `DEPLOY_PORT`: SSH port, usually `22`
-- `DEPLOY_USER`: deploy user on the VPS
-- `DEPLOY_PATH`: absolute repo path on the VPS
-- `DEPLOY_SSH_KEY`: private SSH key used by GitHub Actions
-- `DEPLOY_KNOWN_HOSTS`: output of `ssh-keyscan -H your-host`
-
-Recommended setup:
-
-1. Create a `production` environment in GitHub.
-2. Store the deploy secrets in that environment.
-3. Add required reviewers if you want manual approval before production deploys.
-
-Workflow behavior:
-
-1. connects to the VPS over SSH
-2. runs `git fetch`
-3. fast-forwards `main`
-4. runs `./deploy_production.sh`
-
-This workflow assumes the repo is already cloned on the VPS and `.env.production` is already present there.
+The repo is currently set up for manual production deploys. If you later move back to a VPS auto-deploy flow, add a GitHub Actions workflow that SSHes to the host and runs `./deploy_production.sh`.
 
 ## Notes
 

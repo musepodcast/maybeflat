@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../models/astronomy_event.dart';
 import '../models/astronomy_snapshot.dart';
 import '../models/city_search_result.dart';
+import '../models/map_label.dart';
 import '../models/measure_result.dart';
 import '../models/map_scene.dart';
 import '../models/place_marker.dart';
@@ -335,6 +336,34 @@ class MaybeflatApi {
         .map(
           (result) => CitySearchResult.fromJson(result as Map<String, dynamic>),
         )
+        .toList(growable: false);
+  }
+
+  Future<List<MapLabel>> loadCityLabels({
+    required double minX,
+    required double maxX,
+    required double minY,
+    required double maxY,
+    int limit = 400,
+  }) async {
+    final uri = await _buildUri(
+      '/map/labels/cities',
+      queryParameters: {
+        'min_x': '$minX',
+        'max_x': '$maxX',
+        'min_y': '$minY',
+        'max_y': '$maxY',
+        'limit': '$limit',
+      },
+    );
+    final response = await _client.get(uri).timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load city labels: ${response.statusCode}');
+    }
+
+    final payload = jsonDecode(response.body) as List<dynamic>;
+    return payload
+        .map((label) => MapLabel.fromJson(label as Map<String, dynamic>))
         .toList(growable: false);
   }
 }

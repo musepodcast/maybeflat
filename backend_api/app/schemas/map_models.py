@@ -92,8 +92,8 @@ class TileManifestResponse(BaseModel):
     max_zoom: int
     world_min: float
     world_max: float
-    detail_levels: list[str]
     edge_modes: list[str]
+    tile_set: str
     url_template: str
 
 

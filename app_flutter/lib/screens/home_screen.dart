@@ -43,7 +43,9 @@ const int _maxRouteStops = 6;
 const List<int> _gridStepOptions = [5, 10, 15, 20, 30, 45, 60];
 const int _healthFailureThreshold = 3;
 const double _stateBoundaryZoomThreshold = 3.6;
+const double _cityDetailZoomThreshold = 5.6;
 const Duration _astronomyPlaybackTick = Duration(milliseconds: 200);
+const Duration _cityLabelRefreshDebounce = Duration(milliseconds: 220);
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -68,7 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _healthTimer;
   Timer? _astronomyTimer;
   Timer? _astronomyPlaybackTimer;
+  Timer? _cityLabelRefreshTimer;
   int _consecutiveHealthFailures = 0;
+  int _cityLabelRequestSequence = 0;
   bool _isSyncing = false;
   bool _isMapInteracting = false;
   bool _isMeasuring = false;
@@ -110,7 +114,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _stateBoundaryLayerLoaded = false;
   List<PlaceMarker> _markers = const [];
   List<MapShape> _shapes = const [];
+  List<MapLabel> _sceneLabels = const [];
+  List<MapLabel> _dynamicCityLabels = const [];
   List<MapLabel> _labels = const [];
+  Rect? _visibleMapBounds;
   AstronomySnapshot? _astronomySnapshot;
   List<AstronomyEvent> _astronomyEvents = const [];
   _AstronomyEventFilter _astronomyEventFilter = _AstronomyEventFilter.all;
@@ -152,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _healthTimer?.cancel();
     _astronomyTimer?.cancel();
     _astronomyPlaybackTimer?.cancel();
+    _cityLabelRefreshTimer?.cancel();
     _astronomyObserverController.dispose();
     _astronomyEventScrollController.dispose();
     for (final controller in _routeControllers) {
@@ -234,7 +242,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _stateBoundaryLayerLoaded = false;
           _markers = const [];
           _shapes = const [];
+          _sceneLabels = const [];
+          _dynamicCityLabels = const [];
           _labels = const [];
+          _visibleMapBounds = null;
           _clearRoutePlanner(keepSearchText: true);
         });
       }
@@ -298,7 +309,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _stateBoundaryLayerLoaded = false;
           _markers = const [];
           _shapes = const [];
+          _sceneLabels = const [];
+          _dynamicCityLabels = const [];
           _labels = const [];
+          _visibleMapBounds = null;
           _clearRoutePlanner(keepSearchText: true);
         });
       }
@@ -396,14 +410,107 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       _markers = scene.markers;
       _shapes = scene.shapes;
-      _labels = scene.labels;
+      _sceneLabels = scene.labels;
+      _labels = _mergeLabels(scene.labels, _dynamicCityLabels);
     });
+    _scheduleDynamicCityLabelRefresh();
     if (_shouldShowAstronomy && !_isLoadingAstronomy) {
       _loadAstronomy();
     }
     if (_astronomyEvents.isEmpty && !_isLoadingAstronomyEvents) {
       _loadAstronomyEvents();
     }
+  }
+
+  List<MapLabel> _mergeLabels(
+    List<MapLabel> sceneLabels,
+    List<MapLabel> dynamicCityLabels,
+  ) {
+    if (dynamicCityLabels.isEmpty) {
+      return sceneLabels;
+    }
+
+    final merged = List<MapLabel>.of(sceneLabels);
+    final existingKeys = <String>{
+      for (final label in sceneLabels)
+        _labelMergeKey(label),
+    };
+    for (final label in dynamicCityLabels) {
+      final key = _labelMergeKey(label);
+      if (existingKeys.contains(key)) {
+        continue;
+      }
+      existingKeys.add(key);
+      merged.add(label);
+    }
+    return merged;
+  }
+
+  String _labelMergeKey(MapLabel label) {
+    return '${label.name.toLowerCase()}|'
+        '${label.x.toStringAsFixed(3)}|'
+        '${label.y.toStringAsFixed(3)}';
+  }
+
+  bool _shouldLoadDynamicCityLabels() {
+    return _showLabels &&
+        !_isMapInteracting &&
+        _mapViewScale >= _cityDetailZoomThreshold &&
+        _visibleMapBounds != null &&
+        _backendStatus != _BackendStatus.offline;
+  }
+
+  void _handleVisibleMapBoundsChanged(Rect bounds) {
+    _visibleMapBounds = bounds;
+    _scheduleDynamicCityLabelRefresh();
+  }
+
+  void _scheduleDynamicCityLabelRefresh() {
+    _cityLabelRefreshTimer?.cancel();
+    if (!_shouldLoadDynamicCityLabels()) {
+      _cityLabelRequestSequence += 1;
+      if (_dynamicCityLabels.isEmpty) {
+        return;
+      }
+      setState(() {
+        _dynamicCityLabels = const [];
+        _labels = _mergeLabels(_sceneLabels, _dynamicCityLabels);
+      });
+      return;
+    }
+
+    final visibleBounds = _visibleMapBounds!;
+    final requestSequence = ++_cityLabelRequestSequence;
+    _cityLabelRefreshTimer = Timer(_cityLabelRefreshDebounce, () async {
+      final paddedBounds = Rect.fromLTRB(
+        visibleBounds.left - math.max(0.035, visibleBounds.width * 0.18),
+        visibleBounds.top - math.max(0.035, visibleBounds.height * 0.18),
+        visibleBounds.right + math.max(0.035, visibleBounds.width * 0.18),
+        visibleBounds.bottom + math.max(0.035, visibleBounds.height * 0.18),
+      );
+
+      try {
+        final nextLabels = await _api.loadCityLabels(
+          minX: paddedBounds.left.clamp(-1.05, 1.05).toDouble(),
+          maxX: paddedBounds.right.clamp(-1.05, 1.05).toDouble(),
+          minY: paddedBounds.top.clamp(-1.05, 1.05).toDouble(),
+          maxY: paddedBounds.bottom.clamp(-1.05, 1.05).toDouble(),
+        );
+        if (!mounted ||
+            requestSequence != _cityLabelRequestSequence ||
+            !_shouldLoadDynamicCityLabels()) {
+          return;
+        }
+        setState(() {
+          _dynamicCityLabels = nextLabels;
+          _labels = _mergeLabels(_sceneLabels, _dynamicCityLabels);
+        });
+      } catch (_) {
+        if (!mounted || requestSequence != _cityLabelRequestSequence) {
+          return;
+        }
+      }
+    });
   }
 
   Future<void> _prefetchSceneDetail(String detail) async {
@@ -473,11 +580,13 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       _prefetchSceneDetail(_interactiveSceneDetail());
     }
+    _scheduleDynamicCityLabelRefresh();
   }
 
   void _handleMapViewScaleChanged(double viewScale) {
     final previousShouldLoadStateBoundaries = _shouldLoadStateBoundaries();
     _mapViewScale = viewScale;
+    _scheduleDynamicCityLabelRefresh();
     final currentShouldLoadStateBoundaries = _shouldLoadStateBoundaries();
     if (previousShouldLoadStateBoundaries == currentShouldLoadStateBoundaries) {
       return;
@@ -1411,7 +1520,12 @@ class _HomeScreenState extends State<HomeScreen> {
               _gridStepDegrees = value;
             });
           },
-          onShowLabelsChanged: (value) => setState(() => _showLabels = value),
+          onShowLabelsChanged: (value) {
+            setState(() {
+              _showLabels = value;
+            });
+            _scheduleDynamicCityLabelRefresh();
+          },
           onOuterEdgeModeChanged: (value) {
             if (value == null) {
               return;
@@ -1503,7 +1617,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (context, mapConstraints) {
                       final mapCanvas = FlatWorldCanvas(
                         tileBaseUrl: _api.baseUrl,
-                        tileDetailLevel: _detailLevel,
                         markers: _markers,
                         shapes: _shapes,
                         labels: _labels,
@@ -1531,6 +1644,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         onMapPointPicked: _setRouteStopFromMap,
                         onInteractionChanged: _handleMapInteractionChanged,
                         onViewScaleChanged: _handleMapViewScaleChanged,
+                        onVisibleMapBoundsChanged:
+                            _handleVisibleMapBoundsChanged,
                       );
                       final mapSize = math.min(
                         mapConstraints.maxWidth,

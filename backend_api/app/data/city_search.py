@@ -31,6 +31,24 @@ class CitySearchEntry:
     display_key: str
 
 
+@dataclass(frozen=True)
+class CountryInfoEntry:
+    country_code: str
+    country_name: str
+    capital_name: str | None
+    population: int
+
+
+@dataclass(frozen=True)
+class CuratedWorldCityLabelEntry:
+    name: str
+    latitude: float
+    longitude: float
+    layer: str
+    min_scale: float
+    population: int
+
+
 def _normalize_search_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
@@ -38,24 +56,42 @@ def _normalize_search_text(value: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _country_lookup() -> dict[str, str]:
+def _country_info_lookup() -> dict[str, CountryInfoEntry]:
     if not _COUNTRY_DATA_PATH.exists():
         return {}
 
-    lookup: dict[str, str] = {}
+    lookup: dict[str, CountryInfoEntry] = {}
     with _COUNTRY_DATA_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line or line.startswith("#"):
                 continue
             fields = line.split("\t")
-            if len(fields) < 5:
+            if len(fields) < 8:
                 continue
             iso_code = fields[0].strip()
             country_name = fields[4].strip()
+            capital_name = fields[5].strip() or None
+            try:
+                population = int(fields[7] or 0)
+            except ValueError:
+                population = 0
             if iso_code and country_name:
-                lookup[iso_code] = country_name
+                lookup[iso_code] = CountryInfoEntry(
+                    country_code=iso_code,
+                    country_name=country_name,
+                    capital_name=capital_name,
+                    population=population,
+                )
     return lookup
+
+
+@lru_cache(maxsize=1)
+def _country_lookup() -> dict[str, str]:
+    return {
+        iso_code: entry.country_name
+        for iso_code, entry in _country_info_lookup().items()
+    }
 
 
 @lru_cache(maxsize=1)
@@ -220,3 +256,88 @@ def search_city_entries(query: str, limit: int = 12) -> list[CitySearchEntry]:
         reverse=True,
     )
     return [entry for _, entry in scored[:limit]]
+
+
+def _capital_min_scale(country_population: int) -> float:
+    if country_population >= 200_000_000:
+        return 2.6
+    if country_population >= 80_000_000:
+        return 2.8
+    if country_population >= 25_000_000:
+        return 3.0
+    return 3.2
+
+
+def _world_city_min_scale(city_population: int) -> float:
+    if city_population >= 15_000_000:
+        return 3.0
+    if city_population >= 8_000_000:
+        return 3.2
+    if city_population >= 3_000_000:
+        return 3.4
+    if city_population >= 1_000_000:
+        return 3.7
+    return 4.0
+
+
+@lru_cache(maxsize=1)
+def build_curated_world_city_labels() -> tuple[CuratedWorldCityLabelEntry, ...]:
+    country_info_lookup = _country_info_lookup()
+    capital_keys = {
+        country_code: _normalize_search_text(entry.capital_name)
+        for country_code, entry in country_info_lookup.items()
+        if entry.capital_name
+    }
+    largest_city_by_country: dict[str, CitySearchEntry] = {}
+    capital_city_by_country: dict[str, CitySearchEntry] = {}
+
+    for entry in load_city_entries():
+        if entry.country_code and entry.country_code not in largest_city_by_country:
+            largest_city_by_country[entry.country_code] = entry
+
+        capital_key = capital_keys.get(entry.country_code)
+        if not capital_key or entry.country_code in capital_city_by_country:
+            continue
+
+        if (
+            entry.name_key == capital_key
+            or entry.display_key == capital_key
+            or entry.display_key.startswith(f"{capital_key},")
+        ):
+            capital_city_by_country[entry.country_code] = entry
+
+    labels: list[CuratedWorldCityLabelEntry] = []
+    for country_code, country_info in country_info_lookup.items():
+        capital_city = capital_city_by_country.get(country_code)
+        if capital_city is None:
+            continue
+        labels.append(
+            CuratedWorldCityLabelEntry(
+                name=capital_city.name,
+                latitude=capital_city.latitude,
+                longitude=capital_city.longitude,
+                layer="capital_world",
+                min_scale=_capital_min_scale(country_info.population),
+                population=capital_city.population,
+            )
+        )
+
+    for country_code, city_entry in largest_city_by_country.items():
+        if city_entry.population < 1_000_000:
+            continue
+        capital_city = capital_city_by_country.get(country_code)
+        if capital_city is not None and capital_city.geoname_id == city_entry.geoname_id:
+            continue
+        labels.append(
+            CuratedWorldCityLabelEntry(
+                name=city_entry.name,
+                latitude=city_entry.latitude,
+                longitude=city_entry.longitude,
+                layer="city_world",
+                min_scale=_world_city_min_scale(city_entry.population),
+                population=city_entry.population,
+            )
+        )
+
+    labels.sort(key=lambda entry: (entry.min_scale, -entry.population, entry.name))
+    return tuple(labels)

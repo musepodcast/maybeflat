@@ -6,10 +6,17 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8002
+      MAYBEFLAT_API_WORKERS: ${MAYBEFLAT_API_WORKERS:-4}
+      MAYBEFLAT_TILE_CACHE_ROOT: /var/cache/maybeflat/tiles
+      MAYBEFLAT_WARM_SCENE_DETAILS: ${MAYBEFLAT_WARM_SCENE_DETAILS:-desktop,full}
+      MAYBEFLAT_WARM_EDGE_MODES: ${MAYBEFLAT_WARM_EDGE_MODES:-coastline,country,both}
+      MAYBEFLAT_WARM_MAX_ZOOM: ${MAYBEFLAT_WARM_MAX_ZOOM:-3}
       MAYBEFLAT_ALLOWED_ORIGINS: ${MAYBEFLAT_ALLOWED_ORIGINS:-https://maybeflat.com,https://www.maybeflat.com}
       MAYBEFLAT_ALLOWED_ORIGIN_REGEX: ${MAYBEFLAT_ALLOWED_ORIGIN_REGEX:-^https:\/\/.*\.pages\.dev$}
     expose:
       - "8002"
+    volumes:
+      - maybeflat_tile_cache:/var/cache/maybeflat/tiles
 
   caddy:
     image: caddy:2.10-alpine
@@ -24,6 +31,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./app_flutter/build/web:/srv:ro
+      - maybeflat_tile_cache:/var/cache/maybeflat/tiles:ro
       - ./var/log/caddy:/var/log/caddy
       - caddy_data:/data
       - caddy_config:/config
@@ -31,3 +39,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  maybeflat_tile_cache:

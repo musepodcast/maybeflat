@@ -96,6 +96,16 @@ That script will:
 2. start the local Docker stack
 3. expose Caddy only on `127.0.0.1:8080`
 4. start `cloudflared` with your tunnel token
+5. pre-render the shared tile pyramid through zoom `6` by default
+
+If you want to backfill or extend the shared raster tile pyramid manually after deploy:
+
+```powershell
+docker compose -f docker-compose.home.yml --env-file .env.home exec api python generate_tiles.py --max-zoom 6
+```
+
+That fills the same shared tile tree Caddy serves directly at `/api/map/tiles/{edge_mode}/{z}/{x}/{y}.png`.
+You can tune deploy-time pre-rendering with `MAYBEFLAT_PRERENDER_TILES`, `MAYBEFLAT_PRERENDER_MAX_ZOOM`, and `MAYBEFLAT_PRERENDER_EDGE_MODES` in `.env.home`.
 
 ## 5. Test Locally First
 
