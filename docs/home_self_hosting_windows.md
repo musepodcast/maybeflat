@@ -24,6 +24,7 @@ Cloudflare documents Tunnel as outbound-only and designed to avoid exposing a pu
 - `Caddyfile.home`
 - `.env.home.example`
 - `deploy_home.ps1`
+- `warm_home_tiles.ps1`
 - `stop_home.ps1`
 
 ## Prerequisites
@@ -81,9 +82,22 @@ Then edit `.env.home` and set:
 ```text
 CLOUDFLARE_TUNNEL_TOKEN=your-real-token-here
 MAYBEFLAT_HOME_RESTART_POLICY=no
+MAYBEFLAT_API_WORKERS=1
+MAYBEFLAT_WARM_SCENE_DETAILS=desktop
+MAYBEFLAT_WARM_EDGE_MODES=coastline
+MAYBEFLAT_WARM_MAX_ZOOM=1
+MAYBEFLAT_PRERENDER_TILES=1
+MAYBEFLAT_PRERENDER_MAX_ZOOM=4
+MAYBEFLAT_PRERENDER_EDGE_MODES=coastline
 ```
 
 `MAYBEFLAT_HOME_RESTART_POLICY=no` keeps the home-hosting containers from automatically returning when Docker Desktop or Windows starts again. If you explicitly want the stack to come back with Docker Desktop, set it to `unless-stopped`.
+
+Those defaults are intentionally conservative for Docker Desktop on a home Windows machine:
+
+- one API worker instead of four
+- a small startup warmup
+- a light boot-time pre-render of coastline tiles through zoom `4`
 
 ## 4. Start The Stack
 
@@ -99,9 +113,23 @@ That script will:
 2. start the local Docker stack
 3. expose Caddy only on `127.0.0.1:8080`
 4. start `cloudflared` with your tunnel token
-5. pre-render the shared tile pyramid through zoom `6` by default
+5. pre-render coastline tiles through zoom `4` by default
 
-If you want to backfill or extend the shared raster tile pyramid manually after deploy:
+If you want to backfill more tiles after the site is already up, run the staged backfill script when the machine is idle:
+
+```powershell
+.\warm_home_tiles.ps1
+```
+
+That standard profile extends coastline tiles to zoom `5`, then fills `both` and `country` tiles through zoom `5`.
+
+For an overnight pass that also fills the full shared pyramid through zoom `6`:
+
+```powershell
+.\warm_home_tiles.ps1 -Profile overnight
+```
+
+You can still backfill a specific tile set manually after deploy:
 
 ```powershell
 docker compose -f docker-compose.home.yml --env-file .env.home exec api python generate_tiles.py --max-zoom 6

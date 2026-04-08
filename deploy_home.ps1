@@ -110,12 +110,12 @@ if ([string]::IsNullOrWhiteSpace($preRenderEnabled)) {
 if ($preRenderEnabled -notin @("0", "false", "False", "FALSE", "no", "No", "NO")) {
     $preRenderMaxZoom = Get-ConfigValue -Path ".env.home" -Key "MAYBEFLAT_PRERENDER_MAX_ZOOM"
     if ([string]::IsNullOrWhiteSpace($preRenderMaxZoom)) {
-        $preRenderMaxZoom = "6"
+        $preRenderMaxZoom = "4"
     }
 
     $preRenderEdgeModes = Get-ConfigValue -Path ".env.home" -Key "MAYBEFLAT_PRERENDER_EDGE_MODES"
     if ([string]::IsNullOrWhiteSpace($preRenderEdgeModes)) {
-        $preRenderEdgeModes = "coastline,country,both"
+        $preRenderEdgeModes = "coastline"
     }
 
     Write-Host "Pre-rendering shared tile pyramid (max zoom $preRenderMaxZoom, edge modes $preRenderEdgeModes)..."
