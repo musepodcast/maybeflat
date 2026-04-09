@@ -937,9 +937,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                             _previousAstronomySnapshot,
                                         astronomySnapshot:
                                             widget.astronomySnapshot,
-                                        astronomyTransitionValue:
-                                            _astronomyTransitionController
-                                                .value,
+                                        astronomyTransitionAnimation:
+                                            _astronomyTransitionController,
                                         showSunPath: widget.showSunPath,
                                         showMoonPath: widget.showMoonPath,
                                         astronomyObserverName:
@@ -949,9 +948,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                         viewScale: _viewScale,
                                         viewRotationRadians:
                                             _rotationRadians,
-                                        animationValue:
-                                            _astronomyAnimationController
-                                                .value,
+                                        astronomyPulseAnimation:
+                                            _astronomyAnimationController,
                                         isInteracting: _isInteracting,
                                       ),
                                     ),
@@ -2167,7 +2165,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.showStateBoundaries,
     required this.previousAstronomySnapshot,
     required this.astronomySnapshot,
-    required this.astronomyTransitionValue,
+    required this.astronomyTransitionAnimation,
     required this.showSunPath,
     required this.showMoonPath,
     required this.astronomyObserverName,
@@ -2175,7 +2173,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.labelScale,
     required this.viewScale,
     required this.viewRotationRadians,
-    required this.animationValue,
+    required this.astronomyPulseAnimation,
     required this.isInteracting,
   });
 
@@ -2196,7 +2194,7 @@ class _FlatWorldPainter extends CustomPainter {
   final bool showStateBoundaries;
   final AstronomySnapshot? previousAstronomySnapshot;
   final AstronomySnapshot? astronomySnapshot;
-  final double astronomyTransitionValue;
+  final Animation<double> astronomyTransitionAnimation;
   final bool showSunPath;
   final bool showMoonPath;
   final String? astronomyObserverName;
@@ -2204,7 +2202,7 @@ class _FlatWorldPainter extends CustomPainter {
   final double labelScale;
   final double viewScale;
   final double viewRotationRadians;
-  final double animationValue;
+  final Animation<double> astronomyPulseAnimation;
   final bool isInteracting;
 
   @override
@@ -2795,7 +2793,7 @@ class _FlatWorldPainter extends CustomPainter {
   AstronomySnapshot? _resolvedAstronomySnapshot() {
     final current = astronomySnapshot;
     final previous = previousAstronomySnapshot;
-    final t = astronomyTransitionValue.clamp(0.0, 1.0);
+    final t = astronomyTransitionAnimation.value.clamp(0.0, 1.0);
     if (current == null || previous == null || t >= 1) {
       return current;
     }
@@ -2912,6 +2910,8 @@ class _FlatWorldPainter extends CustomPainter {
         color: const Color(0xFFF3F8FF),
         glowColor: const Color(0x77DCE9FF),
         baseRadius: 8.8,
+        illuminationFraction: snapshot.moon.illuminationFraction,
+        lightSourcePoint: snapshot.sun.subpoint,
       );
     }
 
@@ -3136,9 +3136,12 @@ class _FlatWorldPainter extends CustomPainter {
     required Color color,
     required Color glowColor,
     required double baseRadius,
+    double? illuminationFraction,
+    PlaceMarker? lightSourcePoint,
   }) {
     final projected = _project(center, mapRadius, point.x, point.y);
-    final pulse = 0.78 + (0.22 * math.sin(animationValue * math.pi * 2));
+    final pulse = 0.78 +
+        (0.22 * math.sin(astronomyPulseAnimation.value * math.pi * 2));
     final glowPaint = Paint()..color = glowColor;
     final bodyPaint = Paint()..color = color;
     final glowRadius = _screenStableRadius(
@@ -3149,7 +3152,61 @@ class _FlatWorldPainter extends CustomPainter {
     final bodyRadius =
         _screenStableRadius(baseRadius, viewScale, minRadius: 1.8);
     canvas.drawCircle(projected, glowRadius, glowPaint);
-    canvas.drawCircle(projected, bodyRadius, bodyPaint);
+    if (illuminationFraction != null && lightSourcePoint != null) {
+      final shadowPaint = Paint()
+        ..shader = ui.Gradient.radial(
+          projected.translate(-bodyRadius * 0.22, -bodyRadius * 0.24),
+          bodyRadius * 1.28,
+          const [
+            Color(0xFFB9C3D2),
+            Color(0xFF7F8A9B),
+            Color(0xFF5F697B),
+          ],
+          const [0.0, 0.62, 1.0],
+        );
+      canvas.drawCircle(projected, bodyRadius, shadowPaint);
+
+      final lightSourceProjected = _project(
+        center,
+        mapRadius,
+        lightSourcePoint.x,
+        lightSourcePoint.y,
+      );
+      final lightAngle = math.atan2(
+        lightSourceProjected.dy - projected.dy,
+        lightSourceProjected.dx - projected.dx,
+      );
+      final litPath = _buildMoonLitPath(
+        bodyRadius,
+        illuminationFraction,
+      );
+      if (!litPath.getBounds().isEmpty) {
+        canvas.save();
+        canvas.translate(projected.dx, projected.dy);
+        canvas.rotate(lightAngle);
+        final litPaint = Paint()
+          ..shader = ui.Gradient.radial(
+            Offset(-bodyRadius * 0.18, -bodyRadius * 0.2),
+            bodyRadius * 1.22,
+            [
+              const Color(0xFFFFFFFF),
+              color,
+              const Color(0xFFE0E8F3),
+            ],
+            const [0.0, 0.55, 1.0],
+          );
+        canvas.drawPath(litPath, litPaint);
+        canvas.restore();
+      }
+
+      final rimPaint = Paint()
+        ..color = const Color(0xD9F4F8FF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.1, bodyRadius * 0.1);
+      canvas.drawCircle(projected, bodyRadius, rimPaint);
+    } else {
+      canvas.drawCircle(projected, bodyRadius, bodyPaint);
+    }
 
     final labelPainter = TextPainter(
       text: TextSpan(
@@ -3171,6 +3228,44 @@ class _FlatWorldPainter extends CustomPainter {
       dotPaint: bodyPaint,
       leaderColor: const Color(0xAA10283A),
     );
+  }
+
+  Path _buildMoonLitPath(double radius, double illuminationFraction) {
+    final clampedIllumination =
+        illuminationFraction.clamp(0.0, 1.0).toDouble();
+    if (clampedIllumination <= 0.001) {
+      return Path();
+    }
+    if (clampedIllumination >= 0.999) {
+      return Path()
+        ..addOval(Rect.fromCircle(center: Offset.zero, radius: radius));
+    }
+
+    final terminatorScale = 1.0 - (2.0 * clampedIllumination);
+    const sampleCount = 48;
+    final terminatorPoints = <Offset>[];
+    final rimPoints = <Offset>[];
+
+    for (var index = 0; index <= sampleCount; index += 1) {
+      final t = index / sampleCount;
+      final y = ui.lerpDouble(-radius, radius, t) ?? 0.0;
+      final rimX = math.sqrt(math.max(0.0, (radius * radius) - (y * y)));
+      terminatorPoints.add(Offset(terminatorScale * rimX, y));
+      rimPoints.add(Offset(rimX, y));
+    }
+
+    final path = Path()..moveTo(
+      terminatorPoints.first.dx,
+      terminatorPoints.first.dy,
+    );
+    for (final point in terminatorPoints.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    for (final point in rimPoints.reversed) {
+      path.lineTo(point.dx, point.dy);
+    }
+    path.close();
+    return path;
   }
 
   void _paintLayerLabels(
@@ -3579,7 +3674,6 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.showStateBoundaries != showStateBoundaries ||
         oldDelegate.previousAstronomySnapshot != previousAstronomySnapshot ||
         oldDelegate.astronomySnapshot != astronomySnapshot ||
-        oldDelegate.astronomyTransitionValue != astronomyTransitionValue ||
         oldDelegate.showSunPath != showSunPath ||
         oldDelegate.showMoonPath != showMoonPath ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||

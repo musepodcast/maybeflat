@@ -46,6 +46,46 @@ const double _stateBoundaryZoomThreshold = 3.6;
 const double _cityDetailZoomThreshold = 5.6;
 const Duration _astronomyPlaybackTick = Duration(milliseconds: 200);
 const Duration _cityLabelRefreshDebounce = Duration(milliseconds: 220);
+const List<int> _astronomyTimeZoneOffsetMinutes = [
+  -720,
+  -660,
+  -600,
+  -570,
+  -540,
+  -480,
+  -420,
+  -360,
+  -300,
+  -240,
+  -210,
+  -180,
+  -120,
+  -60,
+  0,
+  60,
+  120,
+  180,
+  210,
+  240,
+  270,
+  300,
+  330,
+  345,
+  360,
+  390,
+  420,
+  480,
+  525,
+  540,
+  570,
+  600,
+  630,
+  660,
+  720,
+  765,
+  780,
+  840,
+];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -73,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _cityLabelRefreshTimer;
   int _consecutiveHealthFailures = 0;
   int _cityLabelRequestSequence = 0;
+  int _astronomyRequestSequence = 0;
   bool _isSyncing = false;
   bool _isMapInteracting = false;
   bool _isMeasuring = false;
@@ -92,6 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showMoonPath = true;
   _OuterEdgeMode _outerEdgeMode = _OuterEdgeMode.coastline;
   _AstronomyTimeMode _astronomyTimeMode = _AstronomyTimeMode.current;
+  String _astronomyDisplayTimeZone = 'local';
   int _gridStepDegrees = 15;
   bool _isLoading = true;
   String? _error;
@@ -685,19 +727,26 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _syncAstronomyPlaybackTime() {
-    final start = _astronomyPlaybackStart;
-    final end = _astronomyPlaybackEnd.isAfter(start)
-        ? _astronomyPlaybackEnd
-        : start.add(const Duration(minutes: 1));
-    if (end != _astronomyPlaybackEnd) {
-      _astronomyPlaybackEnd = end;
+    final startUtc = _astronomyPlaybackStart.toUtc();
+    final configuredEndUtc = _astronomyPlaybackEnd.toUtc();
+    final endUtc = configuredEndUtc.isAfter(startUtc)
+        ? configuredEndUtc
+        : startUtc.add(const Duration(minutes: 1));
+    if (!endUtc.isAtSameMomentAs(configuredEndUtc)) {
+      _astronomyPlaybackEnd = endUtc.toLocal();
     }
-    final current = _astronomyCustomTime;
+    final currentUtc = _astronomyCustomTime.toUtc();
     final totalMilliseconds =
-        end.difference(start).inMilliseconds.clamp(1, 1 << 30);
+        endUtc.difference(startUtc).inMilliseconds.clamp(1, 1 << 30);
     final elapsedMilliseconds =
-        current.difference(start).inMilliseconds.clamp(0, totalMilliseconds);
+        currentUtc.difference(startUtc).inMilliseconds.clamp(
+              0,
+              totalMilliseconds,
+            );
     _astronomyPlaybackProgress = elapsedMilliseconds / totalMilliseconds;
+    _astronomyCustomTime = startUtc
+        .add(Duration(milliseconds: elapsedMilliseconds))
+        .toLocal();
   }
 
   void _applyAstronomyPlaybackPreset(_AstronomyPlaybackPreset? preset) {
@@ -711,11 +760,14 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _astronomyPlaybackPreset = preset;
       if (preset != _AstronomyPlaybackPreset.custom) {
-        _astronomyPlaybackStart = baseTime;
-        _astronomyPlaybackEnd = baseTime.add(duration);
-        _astronomyPlaybackProgress = 0;
+        final halfDuration = Duration(
+          milliseconds: math.max(1, duration.inMilliseconds ~/ 2),
+        );
+        _astronomyPlaybackStart = baseTime.subtract(halfDuration);
+        _astronomyPlaybackEnd = _astronomyPlaybackStart.add(duration);
         _astronomyTimeMode = _AstronomyTimeMode.custom;
-        _astronomyCustomTime = _astronomyPlaybackStart;
+        _astronomyCustomTime = baseTime;
+        _syncAstronomyPlaybackTime();
       }
     });
     _stopAstronomyPlayback();
@@ -738,7 +790,9 @@ class _HomeScreenState extends State<HomeScreen> {
     required BuildContext context,
     required bool isStart,
   }) async {
-    final initial = isStart ? _astronomyPlaybackStart : _astronomyPlaybackEnd;
+    final initialActual =
+        isStart ? _astronomyPlaybackStart : _astronomyPlaybackEnd;
+    final initial = _astronomyDisplayDateTime(initialActual.toUtc());
     final pickedDate = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -762,17 +816,18 @@ class _HomeScreenState extends State<HomeScreen> {
       pickedTime.hour,
       pickedTime.minute,
     );
+    final actualValue = _astronomyWallClockToActualTime(nextValue);
     setState(() {
       _astronomyPlaybackPreset = _AstronomyPlaybackPreset.custom;
       if (isStart) {
-        _astronomyPlaybackStart = nextValue;
+        _astronomyPlaybackStart = actualValue;
         if (!_astronomyPlaybackEnd.isAfter(_astronomyPlaybackStart)) {
           _astronomyPlaybackEnd =
               _astronomyPlaybackStart.add(const Duration(minutes: 1));
         }
       } else {
-        _astronomyPlaybackEnd = nextValue.isAfter(_astronomyPlaybackStart)
-            ? nextValue
+        _astronomyPlaybackEnd = actualValue.isAfter(_astronomyPlaybackStart)
+            ? actualValue
             : _astronomyPlaybackStart.add(const Duration(minutes: 1));
       }
       _astronomyTimeMode = _AstronomyTimeMode.custom;
@@ -813,10 +868,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() {
       _astronomyTimeMode = _AstronomyTimeMode.custom;
+      _syncAstronomyPlaybackTime();
       if (_astronomyPlaybackProgress >= 1) {
         _astronomyPlaybackProgress = 0;
+        _astronomyCustomTime = _astronomyPlaybackStart;
+      } else {
+        _astronomyCustomTime = _astronomyPlaybackCurrentTime();
       }
-      _astronomyCustomTime = _astronomyPlaybackCurrentTime();
       _isAstronomyPlaying = true;
     });
     _syncAstronomyTimer();
@@ -827,26 +885,28 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted || _isLoadingAstronomy) {
           return;
         }
-        final totalDuration = _astronomyPlaybackEnd.difference(
-          _astronomyPlaybackStart,
-        );
+        final startUtc = _astronomyPlaybackStart.toUtc();
+        final configuredEndUtc = _astronomyPlaybackEnd.toUtc();
+        final endUtc = configuredEndUtc.isAfter(startUtc)
+            ? configuredEndUtc
+            : startUtc.add(const Duration(minutes: 1));
+        final totalDuration = endUtc.difference(startUtc);
         final safeTotalDuration = totalDuration.inMilliseconds <= 0
             ? const Duration(minutes: 1)
             : totalDuration;
-        final nextTime = _astronomyCustomTime.add(
+        final nextTimeUtc = _astronomyCustomTime.toUtc().add(
           _astronomyPlaybackTimeStep(_astronomyPlaybackSpeed),
         );
-        final clampedNextTime = nextTime.isAfter(_astronomyPlaybackEnd)
-            ? _astronomyPlaybackEnd
-            : nextTime;
-        final elapsed = clampedNextTime
-            .difference(_astronomyPlaybackStart)
+        final clampedNextTimeUtc =
+            nextTimeUtc.isAfter(endUtc) ? endUtc : nextTimeUtc;
+        final elapsed = clampedNextTimeUtc
+            .difference(startUtc)
             .inMilliseconds
             .clamp(0, safeTotalDuration.inMilliseconds);
         final nextProgress = elapsed / safeTotalDuration.inMilliseconds;
         setState(() {
           _astronomyPlaybackProgress = nextProgress;
-          _astronomyCustomTime = clampedNextTime;
+          _astronomyCustomTime = clampedNextTimeUtc.toLocal();
         });
         await _loadAstronomy(quiet: true);
         if (!mounted || _astronomyPlaybackProgress >= 1) {
@@ -910,7 +970,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _loadAstronomy({bool quiet = false}) async {
+  Future<void> _loadAstronomy({
+    bool quiet = false,
+    DateTime? timestampUtcOverride,
+  }) async {
     if (!_shouldShowAstronomy) {
       if (!mounted) {
         return;
@@ -933,6 +996,10 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    final requestSequence = ++_astronomyRequestSequence;
+    final effectiveTimestampUtc = (timestampUtcOverride ?? _astronomyTimestampUtc())
+        .toUtc();
+
     if (quiet) {
       _isLoadingAstronomy = true;
     } else if (mounted) {
@@ -945,12 +1012,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final observer = _astronomyObserver;
       final snapshot = await _api.loadAstronomySnapshot(
-        timestampUtc: _astronomyTimestampUtc(),
+        timestampUtc: effectiveTimestampUtc,
         observerName: observer?.displayName,
         observerLatitude: observer?.latitude,
         observerLongitude: observer?.longitude,
       );
-      if (!mounted) {
+      if (!mounted || requestSequence != _astronomyRequestSequence) {
         return;
       }
       setState(() {
@@ -960,7 +1027,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     } catch (_) {
-      if (!mounted) {
+      if (!mounted || requestSequence != _astronomyRequestSequence) {
         return;
       }
       setState(() {
@@ -972,11 +1039,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       if (quiet) {
-        _isLoadingAstronomy = false;
-      } else if (mounted) {
-        setState(() {
+        if (requestSequence == _astronomyRequestSequence) {
           _isLoadingAstronomy = false;
-        });
+        }
+      } else if (mounted) {
+        if (requestSequence == _astronomyRequestSequence) {
+          setState(() {
+            _isLoadingAstronomy = false;
+          });
+        }
       }
     }
   }
@@ -1024,7 +1095,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickAstronomyDateTime(BuildContext context) async {
-    final initialDate = _astronomyCustomTime;
+    final initialDate = _astronomyDisplayDateTime(_astronomyCustomTime.toUtc());
     final pickedDate = await showDatePicker(
       context: context,
       initialDate: initialDate,
@@ -1043,14 +1114,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    final selectedWallClock = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
     setState(() {
-      _astronomyCustomTime = DateTime(
-        pickedDate.year,
-        pickedDate.month,
-        pickedDate.day,
-        pickedTime.hour,
-        pickedTime.minute,
-      );
+      _astronomyCustomTime = _astronomyWallClockToActualTime(selectedWallClock);
       _syncAstronomyPlaybackTime();
     });
 
@@ -1090,13 +1163,89 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  List<_ChoiceItem<String>> get _astronomyDisplayTimeZoneOptions => [
+        const _ChoiceItem<String>(
+          value: 'local',
+          label: 'Local device time',
+        ),
+        for (final offsetMinutes in _astronomyTimeZoneOffsetMinutes)
+          _ChoiceItem<String>(
+            value: _astronomyTimeZoneValueForOffset(offsetMinutes),
+            label: _formatAstronomyOffsetLabel(offsetMinutes),
+          ),
+      ];
+
+  String _astronomyTimeZoneValueForOffset(int offsetMinutes) {
+    return 'offset:$offsetMinutes';
+  }
+
+  int? _selectedAstronomyOffsetMinutes() {
+    if (_astronomyDisplayTimeZone == 'local') {
+      return null;
+    }
+    final parts = _astronomyDisplayTimeZone.split(':');
+    if (parts.length != 2 || parts.first != 'offset') {
+      return null;
+    }
+    return int.tryParse(parts.last);
+  }
+
+  String _formatAstronomyOffsetLabel(int offsetMinutes) {
+    if (offsetMinutes == 0) {
+      return 'UTC';
+    }
+
+    final sign = offsetMinutes >= 0 ? '+' : '-';
+    final absoluteMinutes = offsetMinutes.abs();
+    final hours = absoluteMinutes ~/ 60;
+    final minutes = absoluteMinutes % 60;
+    final hourLabel = hours.toString().padLeft(2, '0');
+    if (minutes == 0) {
+      return 'UTC$sign$hourLabel';
+    }
+    return 'UTC$sign$hourLabel:${minutes.toString().padLeft(2, '0')}';
+  }
+
+  String _astronomyDisplayTimeZoneLabel() {
+    final offsetMinutes = _selectedAstronomyOffsetMinutes();
+    if (offsetMinutes == null) {
+      return 'Local';
+    }
+    return _formatAstronomyOffsetLabel(offsetMinutes);
+  }
+
+  DateTime _astronomyDisplayDateTime(DateTime timestampUtc) {
+    final utc = timestampUtc.toUtc();
+    final offsetMinutes = _selectedAstronomyOffsetMinutes();
+    if (offsetMinutes == null) {
+      return utc.toLocal();
+    }
+    return utc.add(Duration(minutes: offsetMinutes));
+  }
+
+  DateTime _astronomyWallClockToActualTime(DateTime wallClock) {
+    final offsetMinutes = _selectedAstronomyOffsetMinutes();
+    if (offsetMinutes == null) {
+      return wallClock;
+    }
+    final utc = DateTime.utc(
+      wallClock.year,
+      wallClock.month,
+      wallClock.day,
+      wallClock.hour,
+      wallClock.minute,
+    ).subtract(Duration(minutes: offsetMinutes));
+    return utc.toLocal();
+  }
+
   String _formatAstronomyTimeLabel(DateTime timestampUtc) {
-    final local = timestampUtc.toLocal();
-    final hour =
-        local.hour == 0 ? 12 : (local.hour > 12 ? local.hour - 12 : local.hour);
-    final minute = local.minute.toString().padLeft(2, '0');
-    final meridiem = local.hour >= 12 ? 'PM' : 'AM';
-    return '${local.month}/${local.day}/${local.year} $hour:$minute $meridiem';
+    final display = _astronomyDisplayDateTime(timestampUtc);
+    final hour = display.hour == 0
+        ? 12
+        : (display.hour > 12 ? display.hour - 12 : display.hour);
+    final minute = display.minute.toString().padLeft(2, '0');
+    final meridiem = display.hour >= 12 ? 'PM' : 'AM';
+    return '${display.month}/${display.day}/${display.year} $hour:$minute $meridiem ${_astronomyDisplayTimeZoneLabel()}';
   }
 
   List<AstronomyEvent> get _eventFilterMatchedAstronomyEvents {
@@ -1179,9 +1328,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (event == null) {
       return;
     }
+    final eventTime = event.timestampUtc.toLocal();
+    final currentDurationUtc = _astronomyPlaybackEnd
+        .toUtc()
+        .difference(_astronomyPlaybackStart.toUtc());
+    final safeDuration = currentDurationUtc.inMilliseconds <= 0
+        ? const Duration(days: 1)
+        : currentDurationUtc;
+    final halfDuration = Duration(
+      milliseconds: math.max(1, safeDuration.inMilliseconds ~/ 2),
+    );
     setState(() {
       _astronomyTimeMode = _AstronomyTimeMode.custom;
-      _astronomyCustomTime = event.timestampUtc.toLocal();
+      _astronomyPlaybackStart = eventTime.subtract(halfDuration);
+      _astronomyPlaybackEnd = _astronomyPlaybackStart.add(safeDuration);
+      _astronomyCustomTime = eventTime;
       _selectedAstronomyEventId = event.id;
       _showSunPath = true;
       _showMoonPath = true;
@@ -1190,7 +1351,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _stopAstronomyPlayback();
     _syncAstronomyTimer();
-    await _loadAstronomy();
+    await _loadAstronomy(timestampUtcOverride: event.timestampUtc);
   }
 
   Future<void> _stepAstronomyEvent(int delta) async {
@@ -1446,6 +1607,8 @@ class _HomeScreenState extends State<HomeScreen> {
           showSunPath: _showSunPath,
           showMoonPath: _showMoonPath,
           astronomyTimeMode: _astronomyTimeMode,
+          astronomyDisplayTimeZone: _astronomyDisplayTimeZone,
+          astronomyDisplayTimeZoneOptions: _astronomyDisplayTimeZoneOptions,
           isLoading: _isLoading,
           isLoadingAstronomy: _isLoadingAstronomy,
           isMeasuring: _isMeasuring,
@@ -1552,6 +1715,14 @@ class _HomeScreenState extends State<HomeScreen> {
             }
             _setAstronomyTimeMode(value);
           },
+          onAstronomyDisplayTimeZoneChanged: (value) {
+            if (value == null) {
+              return;
+            }
+            setState(() {
+              _astronomyDisplayTimeZone = value;
+            });
+          },
           onAstronomyDateTimePressed: () => _pickAstronomyDateTime(context),
           onAstronomyObserverSelected: _setAstronomyObserver,
           onClearAstronomyObserver: () => _setAstronomyObserver(null),
@@ -1569,7 +1740,8 @@ class _HomeScreenState extends State<HomeScreen> {
             _setAstronomyPlaybackProgress(value);
           },
           onAstronomyPlaybackToggle: _toggleAstronomyPlayback,
-          onAstronomyPlaybackStop: () => _stopAstronomyPlayback(),
+          onAstronomyPlaybackStop: () =>
+              _stopAstronomyPlayback(resetProgress: true),
           onAstronomyEventFilterChanged: _setAstronomyEventFilter,
           onAstronomyEclipseSubtypeChanged: _setAstronomyEclipseSubtype,
           onAstronomyEventSelected: (event) {
@@ -1859,6 +2031,8 @@ class _IntroPanel extends StatelessWidget {
     required this.showSunPath,
     required this.showMoonPath,
     required this.astronomyTimeMode,
+    required this.astronomyDisplayTimeZone,
+    required this.astronomyDisplayTimeZoneOptions,
     required this.isLoading,
     required this.isLoadingAstronomy,
     required this.isMeasuring,
@@ -1915,6 +2089,7 @@ class _IntroPanel extends StatelessWidget {
     required this.onShowSunPathChanged,
     required this.onShowMoonPathChanged,
     required this.onAstronomyTimeModeChanged,
+    required this.onAstronomyDisplayTimeZoneChanged,
     required this.onAstronomyDateTimePressed,
     required this.onAstronomyObserverSelected,
     required this.onClearAstronomyObserver,
@@ -1950,6 +2125,8 @@ class _IntroPanel extends StatelessWidget {
   final bool showSunPath;
   final bool showMoonPath;
   final _AstronomyTimeMode astronomyTimeMode;
+  final String astronomyDisplayTimeZone;
+  final List<_ChoiceItem<String>> astronomyDisplayTimeZoneOptions;
   final bool isLoading;
   final bool isLoadingAstronomy;
   final bool isMeasuring;
@@ -2006,6 +2183,7 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowSunPathChanged;
   final ValueChanged<bool> onShowMoonPathChanged;
   final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
+  final ValueChanged<String?> onAstronomyDisplayTimeZoneChanged;
   final VoidCallback onAstronomyDateTimePressed;
   final ValueChanged<CitySearchResult?> onAstronomyObserverSelected;
   final VoidCallback onClearAstronomyObserver;
@@ -2212,6 +2390,23 @@ class _IntroPanel extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 10),
+                  _SelectionField(
+                    labelText: 'Display time zone',
+                    valueText: astronomyDisplayTimeZoneOptions
+                            .firstWhere(
+                              (option) =>
+                                  option.value == astronomyDisplayTimeZone,
+                              orElse: () =>
+                                  astronomyDisplayTimeZoneOptions.first,
+                            )
+                            .label,
+                    helperText:
+                        'Default is local time. Fixed UTC offsets are display-only.',
+                    currentValue: astronomyDisplayTimeZone,
+                    onChanged: onAstronomyDisplayTimeZoneChanged,
+                    options: astronomyDisplayTimeZoneOptions,
+                  ),
+                  const SizedBox(height: 10),
                   OutlinedButton(
                     onPressed: astronomyTimeMode == _AstronomyTimeMode.custom
                         ? onAstronomyDateTimePressed
@@ -2351,7 +2546,7 @@ class _IntroPanel extends StatelessWidget {
                                   astronomyPlaybackProgress > 0
                               ? onAstronomyPlaybackStop
                               : null,
-                          child: const Text('Stop'),
+                          child: const Text('Restart'),
                         ),
                       ),
                     ],
@@ -3072,10 +3267,54 @@ class _IntroPanel extends StatelessWidget {
     return total.toStringAsFixed(3);
   }
 
+  int? _selectedAstronomyOffsetMinutes() {
+    if (astronomyDisplayTimeZone == 'local') {
+      return null;
+    }
+    final parts = astronomyDisplayTimeZone.split(':');
+    if (parts.length != 2 || parts.first != 'offset') {
+      return null;
+    }
+    return int.tryParse(parts.last);
+  }
+
+  String _formatAstronomyOffsetLabel(int offsetMinutes) {
+    if (offsetMinutes == 0) {
+      return 'UTC';
+    }
+
+    final sign = offsetMinutes >= 0 ? '+' : '-';
+    final absoluteMinutes = offsetMinutes.abs();
+    final hours = absoluteMinutes ~/ 60;
+    final minutes = absoluteMinutes % 60;
+    final hourLabel = hours.toString().padLeft(2, '0');
+    if (minutes == 0) {
+      return 'UTC$sign$hourLabel';
+    }
+    return 'UTC$sign$hourLabel:${minutes.toString().padLeft(2, '0')}';
+  }
+
+  String _astronomyDisplayTimeZoneLabel() {
+    final offsetMinutes = _selectedAstronomyOffsetMinutes();
+    if (offsetMinutes == null) {
+      return 'Local';
+    }
+    return _formatAstronomyOffsetLabel(offsetMinutes);
+  }
+
+  DateTime _astronomyDisplayDateTime(DateTime timestampUtc) {
+    final utc = timestampUtc.toUtc();
+    final offsetMinutes = _selectedAstronomyOffsetMinutes();
+    if (offsetMinutes == null) {
+      return utc.toLocal();
+    }
+    return utc.add(Duration(minutes: offsetMinutes));
+  }
+
   String _formatSnapshotTime(AstronomySnapshot snapshot) {
-    final local = snapshot.timestampUtc.toLocal();
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '${local.month}/${local.day}/${local.year} ${local.hour.toString().padLeft(2, '0')}:$minute';
+    final display = _astronomyDisplayDateTime(snapshot.timestampUtc);
+    final minute = display.minute.toString().padLeft(2, '0');
+    return '${display.month}/${display.day}/${display.year} ${display.hour.toString().padLeft(2, '0')}:$minute ${_astronomyDisplayTimeZoneLabel()}';
   }
 
   String _formatIllumination(double? fraction) {
@@ -3141,12 +3380,13 @@ class _IntroPanel extends StatelessWidget {
   }
 
   String _formatEventTime(AstronomyEvent event) {
-    final local = event.timestampUtc.toLocal();
-    final minute = local.minute.toString().padLeft(2, '0');
-    final meridiem = local.hour >= 12 ? 'PM' : 'AM';
-    final hour =
-        local.hour == 0 ? 12 : (local.hour > 12 ? local.hour - 12 : local.hour);
-    return '${local.month}/${local.day}/${local.year} $hour:$minute $meridiem';
+    final display = _astronomyDisplayDateTime(event.timestampUtc);
+    final minute = display.minute.toString().padLeft(2, '0');
+    final meridiem = display.hour >= 12 ? 'PM' : 'AM';
+    final hour = display.hour == 0
+        ? 12
+        : (display.hour > 12 ? display.hour - 12 : display.hour);
+    return '${display.month}/${display.day}/${display.year} $hour:$minute $meridiem ${_astronomyDisplayTimeZoneLabel()}';
   }
 }
 
