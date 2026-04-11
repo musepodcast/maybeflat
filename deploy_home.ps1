@@ -139,5 +139,5 @@ if ($preRenderEnabled -notin @("0", "false", "False", "FALSE", "no", "No", "NO")
 
 Write-Host ""
 Write-Host "Home self-hosting stack started."
-Write-Host "Local check: http://127.0.0.1:8080"
+Write-Host "Local check: http://127.0.0.1:8081"
 Write-Host "Public traffic should arrive through Cloudflare Tunnel only."

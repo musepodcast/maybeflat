@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/admin_analytics_overview.dart';
 import '../models/astronomy_event.dart';
 import '../models/astronomy_snapshot.dart';
 import '../models/city_search_result.dart';
@@ -10,6 +11,7 @@ import '../models/map_label.dart';
 import '../models/measure_result.dart';
 import '../models/map_scene.dart';
 import '../models/place_marker.dart';
+import 'client_identity.dart';
 
 class MaybeflatApi {
   MaybeflatApi({
@@ -151,6 +153,19 @@ class MaybeflatApi {
     );
   }
 
+  Future<Map<String, String>> _requestHeaders({
+    Map<String, String>? headers,
+    String? adminToken,
+  }) async {
+    await ClientIdentity.instance.initialize();
+    return <String, String>{
+      ...ClientIdentity.instance.trackingHeaders(),
+      if (adminToken != null && adminToken.trim().isNotEmpty)
+        'Authorization': 'Bearer ${adminToken.trim()}',
+      ...?headers,
+    };
+  }
+
   Future<bool> checkHealth() async {
     if (_baseUrlIsExplicit || kIsWeb) {
       return _checkHealthAt(baseUrl);
@@ -179,7 +194,12 @@ class MaybeflatApi {
         'include_state_boundaries': '$includeStateBoundaries',
       },
     );
-    final response = await _client.get(uri).timeout(sceneTimeout);
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to load scene: ${response.statusCode}');
     }
@@ -196,7 +216,9 @@ class MaybeflatApi {
     final response = await _client
         .post(
           uri,
-          headers: {'Content-Type': 'application/json'},
+          headers: await _requestHeaders(
+            headers: {'Content-Type': 'application/json'},
+          ),
           body: jsonEncode({
             'name': name,
             'latitude': latitude,
@@ -224,7 +246,9 @@ class MaybeflatApi {
     final response = await _client
         .post(
           uri,
-          headers: {'Content-Type': 'application/json'},
+          headers: await _requestHeaders(
+            headers: {'Content-Type': 'application/json'},
+          ),
           body: jsonEncode({
             'start_latitude': startLatitude,
             'start_longitude': startLongitude,
@@ -270,7 +294,12 @@ class MaybeflatApi {
       '/map/astronomy',
       queryParameters: queryParameters,
     );
-    final response = await _client.get(uri).timeout(sceneTimeout);
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
     if (response.statusCode != 200) {
       throw Exception(
           'Failed to load astronomy snapshot: ${response.statusCode}');
@@ -303,7 +332,12 @@ class MaybeflatApi {
       '/map/events',
       queryParameters: queryParameters,
     );
-    final response = await _client.get(uri).timeout(sceneTimeout);
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
     if (response.statusCode != 200) {
       throw Exception(
           'Failed to load astronomy events: ${response.statusCode}');
@@ -326,7 +360,12 @@ class MaybeflatApi {
         'limit': '$limit',
       },
     );
-    final response = await _client.get(uri).timeout(actionTimeout);
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(actionTimeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to search cities: ${response.statusCode}');
     }
@@ -356,7 +395,12 @@ class MaybeflatApi {
         'limit': '$limit',
       },
     );
-    final response = await _client.get(uri).timeout(sceneTimeout);
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
     if (response.statusCode != 200) {
       throw Exception('Failed to load city labels: ${response.statusCode}');
     }
@@ -365,5 +409,56 @@ class MaybeflatApi {
     return payload
         .map((label) => MapLabel.fromJson(label as Map<String, dynamic>))
         .toList(growable: false);
+  }
+
+  Future<void> trackAnalyticsEvent({
+    required String name,
+    String? path,
+    Map<String, dynamic>? properties,
+  }) async {
+    await ClientIdentity.instance.initialize();
+    final uri = await _buildUri('/analytics/events');
+    await _client
+        .post(
+          uri,
+          headers: await _requestHeaders(
+            headers: {'Content-Type': 'application/json'},
+          ),
+          body: jsonEncode({
+            'visitor_id': ClientIdentity.instance.visitorId,
+            'session_id': ClientIdentity.instance.sessionId,
+            'name': name,
+            'path': path ?? ClientIdentity.instance.currentPath(),
+            'properties': properties ?? const <String, dynamic>{},
+          }),
+        )
+        .timeout(actionTimeout);
+  }
+
+  Future<AdminAnalyticsOverview> loadAdminAnalyticsOverview({
+    required String adminToken,
+    int windowDays = 7,
+    int suspiciousWindowMinutes = 60,
+  }) async {
+    final uri = await _buildUri(
+      '/admin/analytics/overview',
+      queryParameters: {
+        'window_days': '$windowDays',
+        'suspicious_window_minutes': '$suspiciousWindowMinutes',
+      },
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(adminToken: adminToken),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load admin analytics: ${response.statusCode}');
+    }
+
+    return AdminAnalyticsOverview.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 }

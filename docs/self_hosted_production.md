@@ -5,6 +5,7 @@ This production path runs the whole site on one VPS:
 - `Caddy` serves `https://maybeflat.com`
 - the Flutter web build is served as static files
 - `/api/*` is reverse-proxied to the FastAPI container
+- `Postgres` runs privately on the Docker network for analytics and future app data
 - Cloudflare remains your DNS and edge proxy
 
 ## Production Layout
@@ -17,6 +18,7 @@ Internet
         -> static Flutter web files at /
         -> reverse proxy /api/* to api:8002
      -> FastAPI container
+        -> Postgres container
 ```
 
 ## Files Added For This Setup
@@ -52,8 +54,10 @@ If this is a fresh Ubuntu VPS, start with [docs/first_boot.md](first_boot.md).
 1. Copy the repo onto the VPS.
 2. Copy `.env.production.example` to `.env.production`.
 3. Set `ACME_EMAIL` in `.env.production`.
-4. Point Cloudflare DNS for `maybeflat.com` to the VPS public IP.
-5. Set Cloudflare SSL mode to `Full` or `Full (strict)`.
+4. Set a strong `MAYBEFLAT_POSTGRES_PASSWORD` in `.env.production`.
+5. Set a long random `MAYBEFLAT_ADMIN_TOKEN` in `.env.production`.
+6. Point Cloudflare DNS for `maybeflat.com` to the VPS public IP.
+7. Set Cloudflare SSL mode to `Full` or `Full (strict)`.
 
 ## Deploy
 
@@ -121,8 +125,15 @@ Replace `198.51.100.24/32` with your real public admin IP or CIDR.
 - `https://maybeflat.com` -> Caddy serves files from `app_flutter/build/web`
 - `https://maybeflat.com/api/health` -> Caddy proxies to `api:8002/health`
 - `https://maybeflat.com/api/map/...` -> Caddy proxies to the FastAPI container
+- the FastAPI container reaches Postgres internally at `postgres:5432`
 
-The API container is not exposed directly to the internet. Only Caddy publishes ports.
+The API and Postgres containers are not exposed directly to the internet. Only Caddy publishes ports.
+
+## Admin Analytics
+
+After deploy, open `https://maybeflat.com/admin`.
+
+That dashboard reads the protected admin analytics endpoint and requires the `MAYBEFLAT_ADMIN_TOKEN` you set in `.env.production`.
 
 ## Updating Production
 

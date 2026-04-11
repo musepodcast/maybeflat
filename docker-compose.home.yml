@@ -1,9 +1,32 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: ${MAYBEFLAT_HOME_RESTART_POLICY:-no}
+    environment:
+      POSTGRES_DB: ${MAYBEFLAT_POSTGRES_DB:-maybeflat}
+      POSTGRES_USER: ${MAYBEFLAT_POSTGRES_USER:-maybeflat}
+      POSTGRES_PASSWORD: ${MAYBEFLAT_POSTGRES_PASSWORD:-change-me}
+    expose:
+      - "5432"
+    volumes:
+      - maybeflat_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${MAYBEFLAT_POSTGRES_USER:-maybeflat} -d ${MAYBEFLAT_POSTGRES_DB:-maybeflat}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   api:
     build:
       context: .
       dockerfile: backend_api/Dockerfile
     restart: ${MAYBEFLAT_HOME_RESTART_POLICY:-no}
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       PORT: 8002
       MAYBEFLAT_API_WORKERS: ${MAYBEFLAT_API_WORKERS:-1}
@@ -13,6 +36,8 @@ services:
       MAYBEFLAT_WARM_MAX_ZOOM: ${MAYBEFLAT_WARM_MAX_ZOOM:-1}
       MAYBEFLAT_ALLOWED_ORIGINS: ${MAYBEFLAT_ALLOWED_ORIGINS:-https://maybeflat.com,https://www.maybeflat.com}
       MAYBEFLAT_ALLOWED_ORIGIN_REGEX: ${MAYBEFLAT_ALLOWED_ORIGIN_REGEX:-^https:\/\/.*\.pages\.dev$}
+      MAYBEFLAT_DATABASE_URL: ${MAYBEFLAT_DATABASE_URL:-postgresql://maybeflat:${MAYBEFLAT_POSTGRES_PASSWORD:-change-me}@postgres:5432/maybeflat}
+      MAYBEFLAT_ADMIN_TOKEN: ${MAYBEFLAT_ADMIN_TOKEN:-}
     expose:
       - "8002"
     volumes:
@@ -28,7 +53,7 @@ services:
       - ./app_flutter/build/web:/srv:ro
       - maybeflat_tile_cache:/var/cache/maybeflat/tiles:ro
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8081:80"
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -44,3 +69,4 @@ services:
 
 volumes:
   maybeflat_tile_cache:
+  maybeflat_postgres_data:

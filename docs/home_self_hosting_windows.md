@@ -14,6 +14,7 @@ Cloudflare documents Tunnel as outbound-only and designed to avoid exposing a pu
 ## What Runs On Your PC
 
 - Docker container for the FastAPI API
+- Docker container for Postgres
 - Docker container for Caddy
 - Docker container for `cloudflared`
 - Flutter web build files served by Caddy
@@ -82,6 +83,10 @@ Then edit `.env.home` and set:
 ```text
 CLOUDFLARE_TUNNEL_TOKEN=your-real-token-here
 MAYBEFLAT_HOME_RESTART_POLICY=no
+MAYBEFLAT_POSTGRES_DB=maybeflat
+MAYBEFLAT_POSTGRES_USER=maybeflat
+MAYBEFLAT_POSTGRES_PASSWORD=replace-with-a-strong-password
+MAYBEFLAT_ADMIN_TOKEN=replace-with-a-long-random-admin-token
 MAYBEFLAT_API_WORKERS=1
 MAYBEFLAT_WARM_SCENE_DETAILS=desktop
 MAYBEFLAT_WARM_EDGE_MODES=coastline
@@ -111,9 +116,10 @@ That script will:
 
 1. build the Flutter web app with `MAYBEFLAT_API_BASE_URL=/api`
 2. start the local Docker stack
-3. expose Caddy only on `127.0.0.1:8080`
-4. start `cloudflared` with your tunnel token
-5. pre-render coastline tiles through zoom `4` by default
+3. wait for the private Postgres container to become healthy
+4. expose Caddy only on `127.0.0.1:8081`
+5. start `cloudflared` with your tunnel token
+6. pre-render coastline tiles through zoom `4` by default
 
 If you want to backfill more tiles after the site is already up, run the staged backfill script when the machine is idle:
 
@@ -138,20 +144,24 @@ docker compose -f docker-compose.home.yml --env-file .env.home exec api python g
 That fills the same shared tile tree Caddy serves directly at `/api/map/tiles/{edge_mode}/{z}/{x}/{y}.png`.
 You can tune deploy-time pre-rendering with `MAYBEFLAT_PRERENDER_TILES`, `MAYBEFLAT_PRERENDER_MAX_ZOOM`, and `MAYBEFLAT_PRERENDER_EDGE_MODES` in `.env.home`.
 
+## Admin Analytics
+
+Once the stack is up, open `https://maybeflat.com/admin` through your Cloudflare hostname and enter the `MAYBEFLAT_ADMIN_TOKEN` from `.env.home`.
+
 ## 5. Test Locally First
 
 In PowerShell:
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:8080
-Invoke-RestMethod http://127.0.0.1:8080/api/health
+Invoke-WebRequest http://127.0.0.1:8081
+Invoke-RestMethod http://127.0.0.1:8081/api/health
 docker compose -f docker-compose.home.yml --env-file .env.home ps
 docker compose -f docker-compose.home.yml --env-file .env.home logs --tail=100
 ```
 
 Expected:
 
-- local homepage loads on `http://127.0.0.1:8080`
+- local homepage loads on `http://127.0.0.1:8081`
 - API health returns `status = ok`
 - all three containers are running
 

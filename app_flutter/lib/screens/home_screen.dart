@@ -194,6 +194,12 @@ class _HomeScreenState extends State<HomeScreen> {
       (_) => _refreshBackendStatus(),
     );
     _syncAstronomyTimer();
+    _trackEvent(
+      'app_open',
+      properties: <String, dynamic>{
+        'path': Uri.base.path.isEmpty ? '/' : Uri.base.path,
+      },
+    );
   }
 
   @override
@@ -298,6 +304,27 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  void _trackEvent(
+    String name, {
+    Map<String, dynamic>? properties,
+  }) {
+    unawaited(_trackEventSafely(name, properties: properties));
+  }
+
+  Future<void> _trackEventSafely(
+    String name, {
+    Map<String, dynamic>? properties,
+  }) async {
+    try {
+      await _api.trackAnalyticsEvent(
+        name: name,
+        properties: properties,
+      );
+    } catch (_) {
+      // Analytics should never interrupt the product flow.
     }
   }
 
@@ -1056,6 +1083,7 @@ class _HomeScreenState extends State<HomeScreen> {
     bool? showSunPath,
     bool? showMoonPath,
   }) {
+    final wasShowingAstronomy = _shouldShowAstronomy;
     setState(() {
       if (showSunPath != null) {
         _showSunPath = showSunPath;
@@ -1070,6 +1098,15 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     if (!_shouldShowAstronomy) {
       _stopAstronomyPlayback();
+    }
+    if (!wasShowingAstronomy && _shouldShowAstronomy) {
+      _trackEvent(
+        'astronomy_enabled',
+        properties: <String, dynamic>{
+          'sun_path': _showSunPath,
+          'moon_path': _showMoonPath,
+        },
+      );
     }
     _syncAstronomyTimer();
     if (_shouldShowAstronomy) {
@@ -1158,6 +1195,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _astronomyObserver = observer;
       _astronomyObserverController.text = observer?.displayName ?? '';
     });
+    if (observer != null) {
+      _trackEvent(
+        'city_search_selected',
+        properties: <String, dynamic>{
+          'feature': 'astronomy_observer',
+          'country': observer.countryCode,
+          'population': observer.population,
+        },
+      );
+      _trackEvent(
+        'astronomy_observer_selected',
+        properties: <String, dynamic>{
+          'country': observer.countryCode,
+          'population': observer.population,
+        },
+      );
+    }
     if (_shouldShowAstronomy) {
       _loadAstronomy();
     }
@@ -1351,6 +1405,13 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _stopAstronomyPlayback();
     _syncAstronomyTimer();
+    _trackEvent(
+      'astronomy_event_selected',
+      properties: <String, dynamic>{
+        'event_type': event.eventType,
+        'subtype': event.subtype,
+      },
+    );
     await _loadAstronomy(timestampUtcOverride: event.timestampUtc);
   }
 
@@ -1401,6 +1462,22 @@ class _HomeScreenState extends State<HomeScreen> {
         _routePointSources[stopIndex] = entry.displayName;
         _routeControllers[stopIndex].text = entry.displayName;
       });
+      _trackEvent(
+        'city_search_selected',
+        properties: <String, dynamic>{
+          'feature': 'route_stop',
+          'stop_index': stopIndex + 1,
+          'country': entry.countryCode,
+          'population': entry.population,
+        },
+      );
+      _trackEvent(
+        'route_stop_added',
+        properties: <String, dynamic>{
+          'source': 'city_search',
+          'stop_index': stopIndex + 1,
+        },
+      );
 
       await _refreshRouteMeasurement();
     } catch (_) {
@@ -1457,6 +1534,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _routeControllers[stopIndex].text = 'Picked stop ${stopIndex + 1}';
         _pickStopIndex = null;
       });
+      _trackEvent(
+        'route_stop_added',
+        properties: <String, dynamic>{
+          'source': 'map_pick',
+          'stop_index': stopIndex + 1,
+        },
+      );
 
       await _refreshRouteMeasurement();
     } catch (_) {
@@ -1520,6 +1604,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _routePoints = updatedRoutePoints;
         _measureError = null;
       });
+      _trackEvent(
+        'route_measured',
+        properties: <String, dynamic>{
+          'stop_count': filledStops.length,
+          'leg_count': results.length,
+        },
+      );
     } catch (_) {
       if (!mounted) {
         return;
@@ -1754,6 +1845,12 @@ class _HomeScreenState extends State<HomeScreen> {
           onNextAstronomyEvent: () => _stepAstronomyEvent(1),
           onReload: () async {
             _sceneCache.clear();
+            _trackEvent(
+              'scene_reload_requested',
+              properties: <String, dynamic>{
+                'detail': _currentSceneDetail(),
+              },
+            );
             await _loadScene(showLoader: true);
           },
           onDistanceUnitDisplayChanged: (value) {
@@ -1850,9 +1947,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           vertical: isCompactScreen ? 12 : 14,
                         ),
                       ),
-                      onPressed: () => setState(() {
-                        _showSettingsPanel = !_showSettingsPanel;
-                      }),
+                      onPressed: () {
+                        final nextValue = !_showSettingsPanel;
+                        setState(() {
+                          _showSettingsPanel = nextValue;
+                        });
+                        if (nextValue) {
+                          _trackEvent('settings_opened');
+                        }
+                      },
                       icon: Icon(
                         _showSettingsPanel ? Icons.close : Icons.tune,
                       ),

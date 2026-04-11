@@ -1,9 +1,19 @@
 import os
 
+from contextlib import suppress
+from time import perf_counter
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routes.analytics import router as analytics_router
 from app.routes.map import router as map_router
+from app.services.analytics_store import (
+    build_request_id,
+    close_analytics_storage,
+    initialize_analytics_storage,
+    track_request,
+)
 from app.services.tile_renderer import warm_default_cache
 
 
@@ -49,13 +59,49 @@ app.add_middleware(
 )
 
 app.include_router(map_router)
+app.include_router(analytics_router)
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    request_id = build_request_id(request)
+    started_at = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((perf_counter() - started_at) * 1000)
+        with suppress(Exception):
+            track_request(
+                request,
+                status_code=500,
+                duration_ms=duration_ms,
+                request_id=request_id,
+            )
+        raise
+
+    duration_ms = int((perf_counter() - started_at) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    with suppress(Exception):
+        track_request(
+            request,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            request_id=request_id,
+        )
+    return response
 
 
 @app.on_event("startup")
 def warm_runtime_caches() -> None:
+    initialize_analytics_storage()
     print("Warming Maybeflat scene and tile caches...")
     warm_default_cache()
     print("Maybeflat cache warmup complete.")
+
+
+@app.on_event("shutdown")
+def close_runtime_resources() -> None:
+    close_analytics_storage()
 
 
 @app.get("/health")

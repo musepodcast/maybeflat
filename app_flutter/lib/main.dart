@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
+import 'screens/admin_screen.dart';
 import 'screens/home_screen.dart';
+import 'services/client_identity.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ClientIdentity.instance.initialize();
   runApp(const MaybeflatApp());
 }
 
@@ -36,7 +41,15 @@ class MaybeflatApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const HomeScreen(),
+      home: _resolveHome(),
     );
+  }
+
+  Widget _resolveHome() {
+    final path = Uri.base.path;
+    if (kIsWeb && (path == '/admin' || path.startsWith('/admin/'))) {
+      return const AdminScreen();
+    }
+    return const HomeScreen();
   }
 }
