@@ -4,6 +4,14 @@ All notable changes to this project should be recorded in this file.
 
 The format is intentionally simple and release-focused.
 
+## [1.4.1] - 2026-04-11
+
+Analyzer cleanup patch for the analytics release.
+
+- Replaced deprecated admin dashboard dropdown initialization
+- Switched web storage access from `dart:html` to `package:web`
+- Added the `web` package dependency so Flutter analyze passes cleanly
+
 ## [1.4.0] - 2026-04-11
 
 Production analytics and admin operations release.

@@ -1,32 +1,32 @@
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 
 import 'browser_storage_base.dart';
 
 class _WebBrowserStorage implements BrowserStorage {
   @override
-  String? getPersistent(String key) => html.window.localStorage[key];
+  String? getPersistent(String key) => web.window.localStorage.getItem(key);
 
   @override
-  String? getSession(String key) => html.window.sessionStorage[key];
+  String? getSession(String key) => web.window.sessionStorage.getItem(key);
 
   @override
   void removePersistent(String key) {
-    html.window.localStorage.remove(key);
+    web.window.localStorage.removeItem(key);
   }
 
   @override
   void removeSession(String key) {
-    html.window.sessionStorage.remove(key);
+    web.window.sessionStorage.removeItem(key);
   }
 
   @override
   void setPersistent(String key, String value) {
-    html.window.localStorage[key] = value;
+    web.window.localStorage.setItem(key, value);
   }
 
   @override
   void setSession(String key, String value) {
-    html.window.sessionStorage[key] = value;
+    web.window.sessionStorage.setItem(key, value);
   }
 }
 
