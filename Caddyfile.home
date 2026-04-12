@@ -23,6 +23,19 @@
 		reverse_proxy api:8002
 	}
 
+	@app_entry path /
+	handle @app_entry {
+		header Cache-Control "no-store, max-age=0, must-revalidate"
+		rewrite * /index.html
+		file_server
+	}
+
+	@app_shell path /index.html /flutter_bootstrap.js /main.dart.js /flutter_service_worker.js /manifest.json
+	handle @app_shell {
+		header Cache-Control "no-store, max-age=0, must-revalidate"
+		file_server
+	}
+
 	@static {
 		file
 	}
