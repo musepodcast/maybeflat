@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from math import asin, atan2, cos, degrees, radians, sin, sqrt
@@ -17,6 +18,211 @@ from app.data.astronomy_events import ASTRONOMY_EVENTS
 from app.services.flat_world import transform_point
 
 _SUNRISE_ALTITUDE_DEGREES = -0.833
+_J2000_OBLIQUITY_RADIANS = radians(23.43928)
+
+
+@dataclass(frozen=True)
+class _PlanetaryElements:
+    key: str
+    name: str
+    semi_major_axis_base: float
+    semi_major_axis_rate: float
+    eccentricity_base: float
+    eccentricity_rate: float
+    inclination_base: float
+    inclination_rate: float
+    mean_longitude_base: float
+    mean_longitude_rate: float
+    perihelion_longitude_base: float
+    perihelion_longitude_rate: float
+    ascending_node_base: float
+    ascending_node_rate: float
+    mean_anomaly_b: float = 0.0
+    mean_anomaly_c: float = 0.0
+    mean_anomaly_s: float = 0.0
+    mean_anomaly_f: float = 0.0
+    argument_of_perihelion_base: float | None = None
+    mean_anomaly_base: float | None = None
+    mean_motion_degrees_per_day: float | None = None
+    epoch_julian_day: float = 2451545.0
+
+
+_PLANETARY_ELEMENTS: dict[str, _PlanetaryElements] = {
+    "mercury": _PlanetaryElements(
+        key="mercury",
+        name="Mercury",
+        semi_major_axis_base=0.38709843,
+        semi_major_axis_rate=0.00000000,
+        eccentricity_base=0.20563661,
+        eccentricity_rate=0.00002123,
+        inclination_base=7.00559432,
+        inclination_rate=-0.00590158,
+        mean_longitude_base=252.25166724,
+        mean_longitude_rate=149472.67486623,
+        perihelion_longitude_base=77.45771895,
+        perihelion_longitude_rate=0.15940013,
+        ascending_node_base=48.33961819,
+        ascending_node_rate=-0.12214182,
+    ),
+    "venus": _PlanetaryElements(
+        key="venus",
+        name="Venus",
+        semi_major_axis_base=0.72332102,
+        semi_major_axis_rate=-0.00000026,
+        eccentricity_base=0.00676399,
+        eccentricity_rate=-0.00005107,
+        inclination_base=3.39777545,
+        inclination_rate=0.00043494,
+        mean_longitude_base=181.97970850,
+        mean_longitude_rate=58517.81560260,
+        perihelion_longitude_base=131.76755713,
+        perihelion_longitude_rate=0.05679648,
+        ascending_node_base=76.67261496,
+        ascending_node_rate=-0.27274174,
+    ),
+    "earth": _PlanetaryElements(
+        key="earth",
+        name="Earth",
+        semi_major_axis_base=1.00000018,
+        semi_major_axis_rate=-0.00000003,
+        eccentricity_base=0.01673163,
+        eccentricity_rate=-0.00003661,
+        inclination_base=-0.00054346,
+        inclination_rate=-0.01337178,
+        mean_longitude_base=100.46691572,
+        mean_longitude_rate=35999.37306329,
+        perihelion_longitude_base=102.93005885,
+        perihelion_longitude_rate=0.31795260,
+        ascending_node_base=-5.11260389,
+        ascending_node_rate=-0.24123856,
+    ),
+    "mars": _PlanetaryElements(
+        key="mars",
+        name="Mars",
+        semi_major_axis_base=1.52371243,
+        semi_major_axis_rate=0.00000097,
+        eccentricity_base=0.09336511,
+        eccentricity_rate=0.00009149,
+        inclination_base=1.85181869,
+        inclination_rate=-0.00724757,
+        mean_longitude_base=-4.56813164,
+        mean_longitude_rate=19140.29934243,
+        perihelion_longitude_base=-23.91744784,
+        perihelion_longitude_rate=0.45223625,
+        ascending_node_base=49.71320984,
+        ascending_node_rate=-0.26852431,
+    ),
+    "jupiter": _PlanetaryElements(
+        key="jupiter",
+        name="Jupiter",
+        semi_major_axis_base=5.20248019,
+        semi_major_axis_rate=-0.00002864,
+        eccentricity_base=0.04853590,
+        eccentricity_rate=0.00018026,
+        inclination_base=1.29861416,
+        inclination_rate=-0.00322699,
+        mean_longitude_base=34.33479152,
+        mean_longitude_rate=3034.90371757,
+        perihelion_longitude_base=14.27495244,
+        perihelion_longitude_rate=0.18199196,
+        ascending_node_base=100.29282654,
+        ascending_node_rate=0.13024619,
+        mean_anomaly_b=-0.00012452,
+        mean_anomaly_c=0.06064060,
+        mean_anomaly_s=-0.35635438,
+        mean_anomaly_f=38.35125000,
+    ),
+    "saturn": _PlanetaryElements(
+        key="saturn",
+        name="Saturn",
+        semi_major_axis_base=9.54149883,
+        semi_major_axis_rate=-0.00003065,
+        eccentricity_base=0.05550825,
+        eccentricity_rate=-0.00032044,
+        inclination_base=2.49424102,
+        inclination_rate=0.00451969,
+        mean_longitude_base=50.07571329,
+        mean_longitude_rate=1222.11494724,
+        perihelion_longitude_base=92.86136063,
+        perihelion_longitude_rate=0.54179478,
+        ascending_node_base=113.63998702,
+        ascending_node_rate=-0.25015002,
+        mean_anomaly_b=0.00025899,
+        mean_anomaly_c=-0.13434469,
+        mean_anomaly_s=0.87320147,
+        mean_anomaly_f=38.35125000,
+    ),
+    "uranus": _PlanetaryElements(
+        key="uranus",
+        name="Uranus",
+        semi_major_axis_base=19.18797948,
+        semi_major_axis_rate=-0.00020455,
+        eccentricity_base=0.04685740,
+        eccentricity_rate=-0.00001550,
+        inclination_base=0.77298127,
+        inclination_rate=-0.00180155,
+        mean_longitude_base=314.20276625,
+        mean_longitude_rate=428.49512595,
+        perihelion_longitude_base=172.43404441,
+        perihelion_longitude_rate=0.09266985,
+        ascending_node_base=73.96250215,
+        ascending_node_rate=0.05739699,
+        mean_anomaly_b=0.00058331,
+        mean_anomaly_c=-0.97731848,
+        mean_anomaly_s=0.17689245,
+        mean_anomaly_f=7.67025000,
+    ),
+    "neptune": _PlanetaryElements(
+        key="neptune",
+        name="Neptune",
+        semi_major_axis_base=30.06952752,
+        semi_major_axis_rate=0.00006447,
+        eccentricity_base=0.00895439,
+        eccentricity_rate=0.00000818,
+        inclination_base=1.77005520,
+        inclination_rate=0.00022400,
+        mean_longitude_base=304.22289287,
+        mean_longitude_rate=218.46515314,
+        perihelion_longitude_base=46.68158724,
+        perihelion_longitude_rate=0.01009938,
+        ascending_node_base=131.78635853,
+        ascending_node_rate=-0.00606302,
+        mean_anomaly_b=-0.00041348,
+        mean_anomaly_c=0.68346318,
+        mean_anomaly_s=-0.10162547,
+        mean_anomaly_f=7.67025000,
+    ),
+    "pluto": _PlanetaryElements(
+        key="pluto",
+        name="Pluto",
+        semi_major_axis_base=39.58862938517124,
+        semi_major_axis_rate=0.0,
+        eccentricity_base=0.2518378778576892,
+        eccentricity_rate=0.0,
+        inclination_base=17.14771140999114,
+        inclination_rate=0.0,
+        mean_longitude_base=0.0,
+        mean_longitude_rate=0.0,
+        perihelion_longitude_base=223.0013855701622,
+        perihelion_longitude_rate=0.0,
+        ascending_node_base=110.2923840543057,
+        ascending_node_rate=0.0,
+        argument_of_perihelion_base=113.7090015158565,
+        mean_anomaly_base=38.68366347318184,
+        mean_motion_degrees_per_day=0.003956838955553025,
+        epoch_julian_day=2457588.5,
+    ),
+}
+_DISPLAY_PLANET_KEYS = (
+    "mercury",
+    "venus",
+    "mars",
+    "jupiter",
+    "saturn",
+    "uranus",
+    "neptune",
+    "pluto",
+)
 
 
 def _normalize_degrees(value: float) -> float:
@@ -220,6 +426,173 @@ def _moon_phase_name(phase_angle_degrees: float) -> str:
     return "Waning Crescent"
 
 
+def _planetary_centuries(julian_day: float) -> float:
+    return (julian_day - 2451545.0) / 36525.0
+
+
+def _solve_kepler(mean_anomaly_radians: float, eccentricity: float) -> float:
+    eccentric_anomaly = mean_anomaly_radians
+    for _ in range(8):
+        delta = (
+            eccentric_anomaly
+            - eccentricity * sin(eccentric_anomaly)
+            - mean_anomaly_radians
+        ) / (1.0 - eccentricity * cos(eccentric_anomaly))
+        eccentric_anomaly -= delta
+        if abs(delta) < 1e-10:
+            break
+    return eccentric_anomaly
+
+
+def _heliocentric_ecliptic_coordinates(
+    julian_day: float,
+    planet_key: str,
+) -> tuple[float, float, float]:
+    elements = _PLANETARY_ELEMENTS[planet_key]
+    centuries = _planetary_centuries(julian_day)
+    semi_major_axis = (
+        elements.semi_major_axis_base + elements.semi_major_axis_rate * centuries
+    )
+    eccentricity = (
+        elements.eccentricity_base + elements.eccentricity_rate * centuries
+    )
+    inclination = radians(
+        elements.inclination_base + elements.inclination_rate * centuries
+    )
+    mean_longitude = (
+        elements.mean_longitude_base + elements.mean_longitude_rate * centuries
+    )
+    perihelion_longitude = (
+        elements.perihelion_longitude_base
+        + elements.perihelion_longitude_rate * centuries
+    )
+    ascending_node = (
+        elements.ascending_node_base + elements.ascending_node_rate * centuries
+    )
+    argument_of_perihelion_degrees = (
+        elements.argument_of_perihelion_base
+        if elements.argument_of_perihelion_base is not None
+        else perihelion_longitude - ascending_node
+    )
+    argument_of_perihelion = radians(argument_of_perihelion_degrees)
+    if (
+        elements.mean_anomaly_base is not None
+        and elements.mean_motion_degrees_per_day is not None
+    ):
+        mean_anomaly = _normalize_signed_degrees(
+            elements.mean_anomaly_base
+            + elements.mean_motion_degrees_per_day
+            * (julian_day - elements.epoch_julian_day)
+        )
+    else:
+        mean_anomaly = _normalize_signed_degrees(
+            mean_longitude
+            - perihelion_longitude
+            + elements.mean_anomaly_b * centuries * centuries
+            + elements.mean_anomaly_c
+            * cos(radians(elements.mean_anomaly_f * centuries))
+            + elements.mean_anomaly_s
+            * sin(radians(elements.mean_anomaly_f * centuries))
+        )
+    eccentric_anomaly = _solve_kepler(radians(mean_anomaly), eccentricity)
+
+    x_orbital = semi_major_axis * (cos(eccentric_anomaly) - eccentricity)
+    y_orbital = (
+        semi_major_axis
+        * sqrt(max(0.0, 1.0 - eccentricity * eccentricity))
+        * sin(eccentric_anomaly)
+    )
+
+    ascending_node_radians = radians(ascending_node)
+    cos_omega = cos(argument_of_perihelion)
+    sin_omega = sin(argument_of_perihelion)
+    cos_node = cos(ascending_node_radians)
+    sin_node = sin(ascending_node_radians)
+    cos_inclination = cos(inclination)
+    sin_inclination = sin(inclination)
+
+    x_ecliptic = (
+        (cos_omega * cos_node - sin_omega * sin_node * cos_inclination)
+        * x_orbital
+        + (-sin_omega * cos_node - cos_omega * sin_node * cos_inclination)
+        * y_orbital
+    )
+    y_ecliptic = (
+        (cos_omega * sin_node + sin_omega * cos_node * cos_inclination)
+        * x_orbital
+        + (-sin_omega * sin_node + cos_omega * cos_node * cos_inclination)
+        * y_orbital
+    )
+    z_ecliptic = (
+        sin_omega * sin_inclination * x_orbital
+        + cos_omega * sin_inclination * y_orbital
+    )
+    return x_ecliptic, y_ecliptic, z_ecliptic
+
+
+def _ecliptic_to_equatorial(
+    x_ecliptic: float,
+    y_ecliptic: float,
+    z_ecliptic: float,
+) -> tuple[float, float, float]:
+    return (
+        x_ecliptic,
+        y_ecliptic * cos(_J2000_OBLIQUITY_RADIANS)
+        - z_ecliptic * sin(_J2000_OBLIQUITY_RADIANS),
+        y_ecliptic * sin(_J2000_OBLIQUITY_RADIANS)
+        + z_ecliptic * cos(_J2000_OBLIQUITY_RADIANS),
+    )
+
+
+def _equatorial_position_from_vector(
+    x_coordinate: float,
+    y_coordinate: float,
+    z_coordinate: float,
+) -> tuple[float, float]:
+    right_ascension = degrees(atan2(y_coordinate, x_coordinate))
+    declination = degrees(
+        atan2(z_coordinate, sqrt(x_coordinate * x_coordinate + y_coordinate * y_coordinate))
+    )
+    return _normalize_degrees(right_ascension), declination
+
+
+def _planet_equatorial_position(
+    julian_day: float,
+    planet_key: str,
+) -> tuple[float, float]:
+    planet_x, planet_y, planet_z = _heliocentric_ecliptic_coordinates(
+        julian_day,
+        planet_key,
+    )
+    earth_x, earth_y, earth_z = _heliocentric_ecliptic_coordinates(
+        julian_day,
+        "earth",
+    )
+    x_equatorial, y_equatorial, z_equatorial = _ecliptic_to_equatorial(
+        planet_x - earth_x,
+        planet_y - earth_y,
+        planet_z - earth_z,
+    )
+    return _equatorial_position_from_vector(
+        x_equatorial,
+        y_equatorial,
+        z_equatorial,
+    )
+
+
+def _body_equatorial_position(
+    julian_day: float,
+    body_kind: str,
+) -> tuple[float, float]:
+    if body_kind == "sun":
+        right_ascension, declination, _ = _sun_equatorial_position(julian_day)
+        return right_ascension, declination
+    if body_kind == "moon":
+        right_ascension, declination, _ = _moon_equatorial_position(julian_day)
+        return right_ascension, declination
+    return _planet_equatorial_position(julian_day, body_kind)
+
+
 def _transform_body_point(
     name: str,
     latitude: float,
@@ -250,14 +623,10 @@ def _sample_path(
         sample_time = start_time + timedelta(minutes=step * step_minutes)
         sample_julian_day = _julian_day(sample_time)
         gmst = _greenwich_mean_sidereal_degrees(sample_julian_day)
-        if body_kind == "sun":
-            right_ascension, declination, _ = _sun_equatorial_position(
-                sample_julian_day
-            )
-        else:
-            right_ascension, declination, _ = _moon_equatorial_position(
-                sample_julian_day
-            )
+        right_ascension, declination = _body_equatorial_position(
+            sample_julian_day,
+            body_kind,
+        )
         latitude, longitude = _subpoint_from_right_ascension(
             right_ascension,
             declination,
@@ -324,9 +693,38 @@ def _get_snapshot_cached(
             moon_illumination_fraction=round(moon_illumination_fraction, 4),
         )
 
+    planets = []
+    for planet_key in _DISPLAY_PLANET_KEYS:
+        planet_name = _PLANETARY_ELEMENTS[planet_key].name
+        planet_ra, planet_dec = _planet_equatorial_position(julian_day, planet_key)
+        planet_latitude, planet_longitude = _subpoint_from_right_ascension(
+            planet_ra,
+            planet_dec,
+            gmst,
+        )
+        planets.append(
+            AstronomyBodyResponse(
+                name=planet_name,
+                subpoint=_transform_body_point(
+                    planet_name,
+                    planet_latitude,
+                    planet_longitude,
+                ),
+                path=_sample_path(
+                    planet_name,
+                    planet_key,
+                    timestamp_utc,
+                    path_hours,
+                    step_minutes,
+                ),
+                phase_name=None,
+                illumination_fraction=None,
+            )
+        )
+
     return AstronomySnapshotResponse(
         timestamp_utc=timestamp_utc.isoformat().replace("+00:00", "Z"),
-        source="Approximate live astronomy from UTC time, solar geometry, and lunar ephemeris.",
+        source="Approximate live astronomy from UTC time, solar geometry, lunar ephemeris, and J2000 planetary elements.",
         sun=AstronomyBodyResponse(
             name="Sun",
             subpoint=sun_subpoint,
@@ -341,6 +739,7 @@ def _get_snapshot_cached(
             phase_name=moon_phase_name,
             illumination_fraction=round(moon_illumination_fraction, 4),
         ),
+        planets=planets,
         observer=observer,
     )
 

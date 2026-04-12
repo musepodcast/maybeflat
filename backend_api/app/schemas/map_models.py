@@ -121,6 +121,7 @@ class AstronomySnapshotResponse(BaseModel):
     source: str
     sun: AstronomyBodyResponse
     moon: AstronomyBodyResponse
+    planets: list[AstronomyBodyResponse] = Field(default_factory=list)
     observer: AstronomyObserverResponse | None = None
 
 

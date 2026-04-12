@@ -25,8 +25,7 @@ class AstronomyBody {
           .map((point) => PlaceMarker.fromJson(point as Map<String, dynamic>))
           .toList(growable: false),
       phaseName: json['phase_name'] as String?,
-      illuminationFraction:
-          (json['illumination_fraction'] as num?)?.toDouble(),
+      illuminationFraction: (json['illumination_fraction'] as num?)?.toDouble(),
     );
   }
 }
@@ -75,6 +74,7 @@ class AstronomySnapshot {
     required this.source,
     required this.sun,
     required this.moon,
+    required this.planets,
     required this.observer,
   });
 
@@ -82,12 +82,14 @@ class AstronomySnapshot {
   final String source;
   final AstronomyBody sun;
   final AstronomyBody moon;
+  final List<AstronomyBody> planets;
   final AstronomyObserver? observer;
 
   factory AstronomySnapshot.fromJson(Map<String, dynamic> json) {
     return AstronomySnapshot(
       timestampUtc: DateTime.parse(
-        json['timestamp_utc'] as String? ?? DateTime.now().toUtc().toIso8601String(),
+        json['timestamp_utc'] as String? ??
+            DateTime.now().toUtc().toIso8601String(),
       ).toUtc(),
       source: json['source'] as String? ?? 'Astronomy snapshot',
       sun: AstronomyBody.fromJson(
@@ -96,9 +98,13 @@ class AstronomySnapshot {
       moon: AstronomyBody.fromJson(
         json['moon'] as Map<String, dynamic>? ?? const <String, dynamic>{},
       ),
+      planets: (json['planets'] as List<dynamic>? ?? const [])
+          .map((body) => AstronomyBody.fromJson(body as Map<String, dynamic>))
+          .toList(growable: false),
       observer: json['observer'] == null
           ? null
-          : AstronomyObserver.fromJson(json['observer'] as Map<String, dynamic>),
+          : AstronomyObserver.fromJson(
+              json['observer'] as Map<String, dynamic>),
     );
   }
 }

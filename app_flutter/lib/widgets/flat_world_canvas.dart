@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -238,8 +239,7 @@ double _cityLabelDotRadius(String layer, double viewScale) {
     'city_detail' => 0.32,
     _ => 0.45,
   };
-  final scaledRadius =
-      baseRadius / math.pow(viewScale.clamp(1.0, 24.0), 0.82);
+  final scaledRadius = baseRadius / math.pow(viewScale.clamp(1.0, 24.0), 0.82);
   return scaledRadius.clamp(minRadius, baseRadius).toDouble();
 }
 
@@ -346,6 +346,72 @@ Offset _projectMapPoint(Offset center, double radius, double x, double y) {
     center.dy + y * radius,
   );
 }
+
+class _PlanetVisualStyle {
+  const _PlanetVisualStyle({
+    required this.pathColor,
+    required this.bodyColor,
+    required this.glowColor,
+    required this.baseRadius,
+  });
+
+  final Color pathColor;
+  final Color bodyColor;
+  final Color glowColor;
+  final double baseRadius;
+}
+
+const Map<String, _PlanetVisualStyle> _planetVisualStyles =
+    <String, _PlanetVisualStyle>{
+  'Mercury': _PlanetVisualStyle(
+    pathColor: Color(0xB3B9C1C9),
+    bodyColor: Color(0xFFD0D6DD),
+    glowColor: Color(0x66F1F5F9),
+    baseRadius: 5.2,
+  ),
+  'Venus': _PlanetVisualStyle(
+    pathColor: Color(0xB3F0C06B),
+    bodyColor: Color(0xFFF0C06B),
+    glowColor: Color(0x66FFE4A8),
+    baseRadius: 6.2,
+  ),
+  'Mars': _PlanetVisualStyle(
+    pathColor: Color(0xB3E06D5C),
+    bodyColor: Color(0xFFE06D5C),
+    glowColor: Color(0x66FFB5A8),
+    baseRadius: 5.8,
+  ),
+  'Jupiter': _PlanetVisualStyle(
+    pathColor: Color(0xB3DE9A72),
+    bodyColor: Color(0xFFE1A57E),
+    glowColor: Color(0x66F7D7B8),
+    baseRadius: 6.8,
+  ),
+  'Saturn': _PlanetVisualStyle(
+    pathColor: Color(0xB3D7C27B),
+    bodyColor: Color(0xFFD9C88A),
+    glowColor: Color(0x66F7E8B8),
+    baseRadius: 6.4,
+  ),
+  'Uranus': _PlanetVisualStyle(
+    pathColor: Color(0xB36AC7D7),
+    bodyColor: Color(0xFF8BD7E7),
+    glowColor: Color(0x669FEFFF),
+    baseRadius: 6.0,
+  ),
+  'Neptune': _PlanetVisualStyle(
+    pathColor: Color(0xB36688E0),
+    bodyColor: Color(0xFF7792F0),
+    glowColor: Color(0x66B5C7FF),
+    baseRadius: 6.0,
+  ),
+  'Pluto': _PlanetVisualStyle(
+    pathColor: Color(0xB39E8D7B),
+    bodyColor: Color(0xFFB49C87),
+    glowColor: Color(0x66E3D4C7),
+    baseRadius: 4.8,
+  ),
+};
 
 Path _buildStarPath(
   Offset center,
@@ -636,6 +702,7 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.astronomySnapshot,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
     required this.activePickLabel,
@@ -660,6 +727,7 @@ class FlatWorldCanvas extends StatefulWidget {
   final AstronomySnapshot? astronomySnapshot;
   final bool showSunPath;
   final bool showMoonPath;
+  final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
   final String? activePickLabel;
@@ -697,7 +765,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
 
   bool get _shouldAnimateAstronomy =>
       widget.astronomySnapshot != null &&
-      (widget.showSunPath || widget.showMoonPath);
+      (widget.showSunPath ||
+          widget.showMoonPath ||
+          widget.visiblePlanetNames.isNotEmpty);
 
   @override
   void initState() {
@@ -845,7 +915,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                         });
                       }
                     },
-                      child: Listener(
+                    child: Listener(
                       onPointerSignal: (pointerSignal) {
                         if (pointerSignal is PointerScrollEvent) {
                           _handleScrollZoom(
@@ -879,34 +949,34 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                if (hasTileBase)
-                                  RepaintBoundary(
-                                    child: ClipPath(
-                                      clipper: const _MapDiskClipper(),
-                                      child: _MapTileLayer(
-                                        baseUrl: widget.tileBaseUrl,
-                                        edgeMode: widget.edgeRenderMode,
-                                        tileVersion: _tileCacheVersion,
-                                        viewportSize: constraints.biggest,
-                                        tileZoom: tileZoom,
-                                        tileRange: tileRange,
-                                        showParentFallback:
-                                            !isCompactViewport &&
-                                            !_isInteracting,
+                                  if (hasTileBase)
+                                    RepaintBoundary(
+                                      child: ClipPath(
+                                        clipper: const _MapDiskClipper(),
+                                        child: _MapTileLayer(
+                                          baseUrl: widget.tileBaseUrl,
+                                          edgeMode: widget.edgeRenderMode,
+                                          tileVersion: _tileCacheVersion,
+                                          viewportSize: constraints.biggest,
+                                          tileZoom: tileZoom,
+                                          tileRange: tileRange,
+                                          showParentFallback:
+                                              !isCompactViewport &&
+                                                  !_isInteracting,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                if (!hasTileBase)
-                                  RepaintBoundary(
-                                    child: CustomPaint(
-                                      isComplex: true,
-                                      willChange: false,
-                                      painter: _BaseMapPainter(
-                                        projectedScene: projectedScene,
-                                        edgeRenderMode: widget.edgeRenderMode,
+                                  if (!hasTileBase)
+                                    RepaintBoundary(
+                                      child: CustomPaint(
+                                        isComplex: true,
+                                        willChange: false,
+                                        painter: _BaseMapPainter(
+                                          projectedScene: projectedScene,
+                                          edgeRenderMode: widget.edgeRenderMode,
+                                        ),
                                       ),
                                     ),
-                                  ),
                                   RepaintBoundary(
                                     child: CustomPaint(
                                       painter: _FlatWorldPainter(
@@ -941,13 +1011,14 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                             _astronomyTransitionController,
                                         showSunPath: widget.showSunPath,
                                         showMoonPath: widget.showMoonPath,
+                                        visiblePlanetNames:
+                                            widget.visiblePlanetNames,
                                         astronomyObserverName:
                                             widget.astronomyObserverName,
                                         routePoints: widget.routePoints,
                                         labelScale: _labelScale,
                                         viewScale: _viewScale,
-                                        viewRotationRadians:
-                                            _rotationRadians,
+                                        viewRotationRadians: _rotationRadians,
                                         astronomyPulseAnimation:
                                             _astronomyAnimationController,
                                         isInteracting: _isInteracting,
@@ -1203,8 +1274,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       Offset(viewportSize.width, viewportSize.height),
     );
     final center = viewportSize.center(Offset.zero);
-    final mapRadius =
-        (math.min(viewportSize.width, viewportSize.height) / 2) *
+    final mapRadius = (math.min(viewportSize.width, viewportSize.height) / 2) *
         _mapRadiusScaleForSize(viewportSize);
     final visibleCorners = [
       sceneTopLeft,
@@ -1635,7 +1705,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     _ProjectedShapeEntry? selectedEntry;
     double? selectedArea;
     for (final entry in entries) {
-      if (!entry.hasClosedRing || !entry.bounds.inflate(2).contains(scenePoint)) {
+      if (!entry.hasClosedRing ||
+          !entry.bounds.inflate(2).contains(scenePoint)) {
         continue;
       }
       if (!entry.path.contains(scenePoint)) {
@@ -1835,8 +1906,7 @@ class _MapTileLayer extends StatelessWidget {
     final centerTileX = (tileRange.minX + tileRange.maxX) / 2;
     final centerTileY = (tileRange.minY + tileRange.maxY) / 2;
     final diskCenter = Offset(viewportSize.width / 2, viewportSize.height / 2);
-    final diskRadius =
-        math.min(viewportSize.width, viewportSize.height) *
+    final diskRadius = math.min(viewportSize.width, viewportSize.height) *
         (_mapRadiusScaleForSize(viewportSize) / 2);
     final visibleTiles = <_TileVisualRequest>[
       for (var tileX = tileRange.minX; tileX <= tileRange.maxX; tileX += 1)
@@ -2168,6 +2238,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.astronomyTransitionAnimation,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
     required this.labelScale,
@@ -2197,6 +2268,7 @@ class _FlatWorldPainter extends CustomPainter {
   final Animation<double> astronomyTransitionAnimation;
   final bool showSunPath;
   final bool showMoonPath;
+  final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
   final double labelScale;
@@ -2210,7 +2282,8 @@ class _FlatWorldPainter extends CustomPainter {
     final center = projectedScene.center;
     final mapRadius = projectedScene.mapRadius;
 
-    if (astronomySnapshot != null && (showSunPath || showMoonPath)) {
+    if (astronomySnapshot != null &&
+        (showSunPath || showMoonPath || visiblePlanetNames.isNotEmpty)) {
       _paintAstronomyOverlay(canvas, center, mapRadius);
     }
 
@@ -2800,31 +2873,46 @@ class _FlatWorldPainter extends CustomPainter {
     return AstronomySnapshot(
       timestampUtc: current.timestampUtc,
       source: current.source,
-      sun: AstronomyBody(
-        name: current.sun.name,
-        subpoint:
-            _lerpPlaceMarker(previous.sun.subpoint, current.sun.subpoint, t),
-        path: current.sun.path,
-        phaseName: current.sun.phaseName,
-        illuminationFraction: current.sun.illuminationFraction,
-      ),
-      moon: AstronomyBody(
-        name: current.moon.name,
-        subpoint:
-            _lerpPlaceMarker(previous.moon.subpoint, current.moon.subpoint, t),
-        path: current.moon.path,
-        phaseName: current.moon.phaseName,
-        illuminationFraction: previous.moon.illuminationFraction == null ||
-                current.moon.illuminationFraction == null
-            ? current.moon.illuminationFraction
-            : ui.lerpDouble(
-                previous.moon.illuminationFraction!,
-                current.moon.illuminationFraction!,
-                t,
-              ),
-      ),
+      sun: _lerpAstronomyBody(previous.sun, current.sun, t),
+      moon: _lerpAstronomyBody(previous.moon, current.moon, t),
+      planets: _lerpAstronomyBodies(previous.planets, current.planets, t),
       observer: current.observer,
     );
+  }
+
+  AstronomyBody _lerpAstronomyBody(
+    AstronomyBody start,
+    AstronomyBody end,
+    double t,
+  ) {
+    final startIllumination = start.illuminationFraction;
+    final endIllumination = end.illuminationFraction;
+    return AstronomyBody(
+      name: end.name,
+      subpoint: _lerpPlaceMarker(start.subpoint, end.subpoint, t),
+      path: end.path,
+      phaseName: end.phaseName,
+      illuminationFraction: startIllumination == null || endIllumination == null
+          ? endIllumination
+          : ui.lerpDouble(startIllumination, endIllumination, t),
+    );
+  }
+
+  List<AstronomyBody> _lerpAstronomyBodies(
+    List<AstronomyBody> previousBodies,
+    List<AstronomyBody> currentBodies,
+    double t,
+  ) {
+    final previousByName = <String, AstronomyBody>{
+      for (final body in previousBodies) body.name: body,
+    };
+    return currentBodies.map((body) {
+      final previousBody = previousByName[body.name];
+      if (previousBody == null) {
+        return body;
+      }
+      return _lerpAstronomyBody(previousBody, body, t);
+    }).toList(growable: false);
   }
 
   PlaceMarker _lerpPlaceMarker(PlaceMarker start, PlaceMarker end, double t) {
@@ -2887,6 +2975,33 @@ class _FlatWorldPainter extends CustomPainter {
         mapRadius,
         snapshot.moon.path,
         const Color(0xCFE4EEF7),
+      );
+    }
+    final visiblePlanets = <String>{
+      for (final planetName in visiblePlanetNames) planetName,
+    };
+    for (final planet in snapshot.planets) {
+      if (!visiblePlanets.contains(planet.name)) {
+        continue;
+      }
+      final style =
+          _planetVisualStyles[planet.name] ?? _planetVisualStyles.values.first;
+      _paintAstronomyPath(
+        canvas,
+        center,
+        mapRadius,
+        planet.path,
+        style.pathColor,
+      );
+      _paintAstronomyBody(
+        canvas,
+        center,
+        mapRadius,
+        planet.subpoint,
+        label: planet.name,
+        color: style.bodyColor,
+        glowColor: style.glowColor,
+        baseRadius: style.baseRadius,
       );
     }
 
@@ -3140,8 +3255,8 @@ class _FlatWorldPainter extends CustomPainter {
     PlaceMarker? lightSourcePoint,
   }) {
     final projected = _project(center, mapRadius, point.x, point.y);
-    final pulse = 0.78 +
-        (0.22 * math.sin(astronomyPulseAnimation.value * math.pi * 2));
+    final pulse =
+        0.78 + (0.22 * math.sin(astronomyPulseAnimation.value * math.pi * 2));
     final glowPaint = Paint()..color = glowColor;
     final bodyPaint = Paint()..color = color;
     final glowRadius = _screenStableRadius(
@@ -3231,8 +3346,7 @@ class _FlatWorldPainter extends CustomPainter {
   }
 
   Path _buildMoonLitPath(double radius, double illuminationFraction) {
-    final clampedIllumination =
-        illuminationFraction.clamp(0.0, 1.0).toDouble();
+    final clampedIllumination = illuminationFraction.clamp(0.0, 1.0).toDouble();
     if (clampedIllumination <= 0.001) {
       return Path();
     }
@@ -3254,10 +3368,11 @@ class _FlatWorldPainter extends CustomPainter {
       rimPoints.add(Offset(rimX, y));
     }
 
-    final path = Path()..moveTo(
-      terminatorPoints.first.dx,
-      terminatorPoints.first.dy,
-    );
+    final path = Path()
+      ..moveTo(
+        terminatorPoints.first.dx,
+        terminatorPoints.first.dy,
+      );
     for (final point in terminatorPoints.skip(1)) {
       path.lineTo(point.dx, point.dy);
     }
@@ -3387,7 +3502,8 @@ class _FlatWorldPainter extends CustomPainter {
       if (hasCollision) {
         continue;
       }
-      placedLabelRects.add(collisionRect.inflate(2 / viewScale.clamp(1.0, 24.0)));
+      placedLabelRects
+          .add(collisionRect.inflate(2 / viewScale.clamp(1.0, 24.0)));
 
       if (isCapitalLabel) {
         final starRadius = _capitalLabelStarRadius(viewScale);
@@ -3676,6 +3792,7 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.astronomySnapshot != astronomySnapshot ||
         oldDelegate.showSunPath != showSunPath ||
         oldDelegate.showMoonPath != showMoonPath ||
+        !listEquals(oldDelegate.visiblePlanetNames, visiblePlanetNames) ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||
         oldDelegate.routePoints != routePoints ||
         oldDelegate.labels != labels ||

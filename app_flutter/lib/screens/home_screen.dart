@@ -86,6 +86,16 @@ const List<int> _astronomyTimeZoneOffsetMinutes = [
   780,
   840,
 ];
+const List<String> _astronomyPlanetNames = <String>[
+  'Mercury',
+  'Venus',
+  'Mars',
+  'Jupiter',
+  'Saturn',
+  'Uranus',
+  'Neptune',
+  'Pluto',
+];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -131,6 +141,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showStateBoundaries = true;
   bool _showSunPath = true;
   bool _showMoonPath = true;
+  final Map<String, bool> _planetVisibility = <String, bool>{
+    for (final planetName in _astronomyPlanetNames) planetName: false,
+  };
   _OuterEdgeMode _outerEdgeMode = _OuterEdgeMode.coastline;
   _AstronomyTimeMode _astronomyTimeMode = _AstronomyTimeMode.current;
   String _astronomyDisplayTimeZone = 'local';
@@ -501,8 +514,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final merged = List<MapLabel>.of(sceneLabels);
     final existingKeys = <String>{
-      for (final label in sceneLabels)
-        _labelMergeKey(label),
+      for (final label in sceneLabels) _labelMergeKey(label),
     };
     for (final label in dynamicCityLabels) {
       final key = _labelMergeKey(label);
@@ -685,7 +697,45 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$detail|state:${includeStateBoundaries ? 1 : 0}';
   }
 
-  bool get _shouldShowAstronomy => _showSunPath || _showMoonPath;
+  bool get _showAnyPlanets =>
+      _planetVisibility.values.any((isVisible) => isVisible);
+
+  bool get _allPlanetsVisible =>
+      _planetVisibility.isNotEmpty &&
+      _planetVisibility.values.every((isVisible) => isVisible);
+
+  List<String> get _visiblePlanetNames => _astronomyPlanetNames
+      .where((planetName) => _planetVisibility[planetName] ?? false)
+      .toList(growable: false);
+
+  bool get _shouldShowAstronomy =>
+      _showSunPath || _showMoonPath || _showAnyPlanets;
+
+  Map<String, dynamic> _astronomyVisibilityProperties() {
+    final visiblePlanets = _visiblePlanetNames;
+    return <String, dynamic>{
+      'sun_path': _showSunPath,
+      'moon_path': _showMoonPath,
+      'visible_planet_count': visiblePlanets.length,
+      'visible_planets': visiblePlanets,
+    };
+  }
+
+  void _finalizeAstronomyVisibilityChange(bool wasShowingAstronomy) {
+    if (!_shouldShowAstronomy) {
+      _stopAstronomyPlayback();
+    }
+    if (!wasShowingAstronomy && _shouldShowAstronomy) {
+      _trackEvent(
+        'astronomy_enabled',
+        properties: _astronomyVisibilityProperties(),
+      );
+    }
+    _syncAstronomyTimer();
+    if (_shouldShowAstronomy) {
+      _loadAstronomy();
+    }
+  }
 
   DateTime _astronomyPlaybackCurrentTime() {
     final startUtc = _astronomyPlaybackStart.toUtc();
@@ -771,9 +821,8 @@ class _HomeScreenState extends State<HomeScreen> {
               totalMilliseconds,
             );
     _astronomyPlaybackProgress = elapsedMilliseconds / totalMilliseconds;
-    _astronomyCustomTime = startUtc
-        .add(Duration(milliseconds: elapsedMilliseconds))
-        .toLocal();
+    _astronomyCustomTime =
+        startUtc.add(Duration(milliseconds: elapsedMilliseconds)).toLocal();
   }
 
   void _applyAstronomyPlaybackPreset(_AstronomyPlaybackPreset? preset) {
@@ -922,8 +971,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ? const Duration(minutes: 1)
             : totalDuration;
         final nextTimeUtc = _astronomyCustomTime.toUtc().add(
-          _astronomyPlaybackTimeStep(_astronomyPlaybackSpeed),
-        );
+              _astronomyPlaybackTimeStep(_astronomyPlaybackSpeed),
+            );
         final clampedNextTimeUtc =
             nextTimeUtc.isAfter(endUtc) ? endUtc : nextTimeUtc;
         final elapsed = clampedNextTimeUtc
@@ -1018,14 +1067,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       setState(() {
         _astronomyError =
-            'Backend must be online to load the sun and moon overlay.';
+            'Backend must be online to load the astronomy overlay.';
       });
       return;
     }
 
     final requestSequence = ++_astronomyRequestSequence;
-    final effectiveTimestampUtc = (timestampUtcOverride ?? _astronomyTimestampUtc())
-        .toUtc();
+    final effectiveTimestampUtc =
+        (timestampUtcOverride ?? _astronomyTimestampUtc()).toUtc();
 
     if (quiet) {
       _isLoadingAstronomy = true;
@@ -1096,22 +1145,58 @@ class _HomeScreenState extends State<HomeScreen> {
         _astronomyError = null;
       }
     });
-    if (!_shouldShowAstronomy) {
-      _stopAstronomyPlayback();
+    _finalizeAstronomyVisibilityChange(wasShowingAstronomy);
+  }
+
+  void _setPlanetVisibility(String planetName, bool isVisible) {
+    if ((_planetVisibility[planetName] ?? false) == isVisible) {
+      return;
     }
-    if (!wasShowingAstronomy && _shouldShowAstronomy) {
-      _trackEvent(
-        'astronomy_enabled',
-        properties: <String, dynamic>{
-          'sun_path': _showSunPath,
-          'moon_path': _showMoonPath,
-        },
-      );
+    final wasShowingAstronomy = _shouldShowAstronomy;
+    setState(() {
+      _planetVisibility[planetName] = isVisible;
+      if (!_shouldShowAstronomy) {
+        _astronomySnapshot = null;
+        _astronomyError = null;
+      }
+    });
+    _trackEvent(
+      'astronomy_planet_toggle',
+      properties: <String, dynamic>{
+        'planet': planetName.toLowerCase(),
+        'enabled': isVisible,
+        'visible_planet_count': _visiblePlanetNames.length,
+      },
+    );
+    _finalizeAstronomyVisibilityChange(wasShowingAstronomy);
+  }
+
+  void _setAllPlanetsVisibility(bool isVisible) {
+    final hasChange = _astronomyPlanetNames.any(
+      (planetName) => (_planetVisibility[planetName] ?? false) != isVisible,
+    );
+    if (!hasChange) {
+      return;
     }
-    _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
-    }
+    final wasShowingAstronomy = _shouldShowAstronomy;
+    setState(() {
+      for (final planetName in _astronomyPlanetNames) {
+        _planetVisibility[planetName] = isVisible;
+      }
+      if (!_shouldShowAstronomy) {
+        _astronomySnapshot = null;
+        _astronomyError = null;
+      }
+    });
+    _trackEvent(
+      'astronomy_planet_toggle',
+      properties: <String, dynamic>{
+        'planet': 'all',
+        'enabled': isVisible,
+        'visible_planet_count': _visiblePlanetNames.length,
+      },
+    );
+    _finalizeAstronomyVisibilityChange(wasShowingAstronomy);
   }
 
   void _setAstronomyTimeMode(_AstronomyTimeMode mode) {
@@ -1697,6 +1782,8 @@ class _HomeScreenState extends State<HomeScreen> {
           showStateBoundaries: _showStateBoundaries,
           showSunPath: _showSunPath,
           showMoonPath: _showMoonPath,
+          allPlanetsVisible: _allPlanetsVisible,
+          planetVisibility: _planetVisibility,
           astronomyTimeMode: _astronomyTimeMode,
           astronomyDisplayTimeZone: _astronomyDisplayTimeZone,
           astronomyDisplayTimeZoneOptions: _astronomyDisplayTimeZoneOptions,
@@ -1800,6 +1887,8 @@ class _HomeScreenState extends State<HomeScreen> {
               _setAstronomyToggle(showSunPath: value),
           onShowMoonPathChanged: (value) =>
               _setAstronomyToggle(showMoonPath: value),
+          onShowAllPlanetsChanged: _setAllPlanetsVisibility,
+          onShowPlanetChanged: _setPlanetVisibility,
           onAstronomyTimeModeChanged: (value) {
             if (value == null) {
               return;
@@ -1905,6 +1994,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         astronomySnapshot: _astronomySnapshot,
                         showSunPath: _showSunPath,
                         showMoonPath: _showMoonPath,
+                        visiblePlanetNames: _visiblePlanetNames,
                         astronomyObserverName: _astronomyObserver?.displayName,
                         routePoints: _activeRoutePoints,
                         activePickLabel: _pickStopIndex == null
@@ -2133,6 +2223,8 @@ class _IntroPanel extends StatelessWidget {
     required this.showStateBoundaries,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.allPlanetsVisible,
+    required this.planetVisibility,
     required this.astronomyTimeMode,
     required this.astronomyDisplayTimeZone,
     required this.astronomyDisplayTimeZoneOptions,
@@ -2191,6 +2283,8 @@ class _IntroPanel extends StatelessWidget {
     required this.onShowStateBoundariesChanged,
     required this.onShowSunPathChanged,
     required this.onShowMoonPathChanged,
+    required this.onShowAllPlanetsChanged,
+    required this.onShowPlanetChanged,
     required this.onAstronomyTimeModeChanged,
     required this.onAstronomyDisplayTimeZoneChanged,
     required this.onAstronomyDateTimePressed,
@@ -2227,6 +2321,8 @@ class _IntroPanel extends StatelessWidget {
   final bool showStateBoundaries;
   final bool showSunPath;
   final bool showMoonPath;
+  final bool allPlanetsVisible;
+  final Map<String, bool> planetVisibility;
   final _AstronomyTimeMode astronomyTimeMode;
   final String astronomyDisplayTimeZone;
   final List<_ChoiceItem<String>> astronomyDisplayTimeZoneOptions;
@@ -2285,6 +2381,8 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowStateBoundariesChanged;
   final ValueChanged<bool> onShowSunPathChanged;
   final ValueChanged<bool> onShowMoonPathChanged;
+  final ValueChanged<bool> onShowAllPlanetsChanged;
+  final void Function(String planetName, bool isVisible) onShowPlanetChanged;
   final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
   final ValueChanged<String?> onAstronomyDisplayTimeZoneChanged;
   final VoidCallback onAstronomyDateTimePressed;
@@ -2459,7 +2557,7 @@ class _IntroPanel extends StatelessWidget {
               const SizedBox(height: 18),
               _CollapsiblePanel(
                 title: 'Astronomy Overlay',
-                subtitle: 'Sun, moon, observer, and event controls',
+                subtitle: 'Sun, moon, planets, observer, and event controls',
                 initiallyExpanded: false,
                 children: [
                   SwitchListTile(
@@ -2474,6 +2572,34 @@ class _IntroPanel extends StatelessWidget {
                     title: const Text('Moon path'),
                     onChanged: onShowMoonPathChanged,
                   ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Planets',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF112A46),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: allPlanetsVisible,
+                    title: const Text('All planets'),
+                    subtitle: const Text(
+                      'Toggle Mercury through Neptune together.',
+                    ),
+                    onChanged: onShowAllPlanetsChanged,
+                  ),
+                  for (final planetName in _astronomyPlanetNames)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      value: planetVisibility[planetName] ?? false,
+                      title: Text(planetName),
+                      onChanged: (value) =>
+                          onShowPlanetChanged(planetName, value),
+                    ),
                   _SelectionField(
                     labelText: 'Astronomy time',
                     valueText: astronomyTimeMode == _AstronomyTimeMode.current
@@ -2496,13 +2622,11 @@ class _IntroPanel extends StatelessWidget {
                   _SelectionField(
                     labelText: 'Display time zone',
                     valueText: astronomyDisplayTimeZoneOptions
-                            .firstWhere(
-                              (option) =>
-                                  option.value == astronomyDisplayTimeZone,
-                              orElse: () =>
-                                  astronomyDisplayTimeZoneOptions.first,
-                            )
-                            .label,
+                        .firstWhere(
+                          (option) => option.value == astronomyDisplayTimeZone,
+                          orElse: () => astronomyDisplayTimeZoneOptions.first,
+                        )
+                        .label,
                     helperText:
                         'Default is local time. Fixed UTC offsets are display-only.',
                     currentValue: astronomyDisplayTimeZone,
@@ -2711,6 +2835,24 @@ class _IntroPanel extends StatelessWidget {
                               height: 1.35,
                             ),
                           ),
+                          for (final planetName in _astronomyPlanetNames)
+                            if (planetVisibility[planetName] ?? false)
+                              if (_planetFromSnapshot(
+                                astronomySnapshot!,
+                                planetName,
+                              )
+                                  case final planetBody?)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    '$planetName over: ${_formatBodySummary(planetBody.subpoint)}',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Color(0xFF335C67),
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
                           if (astronomySnapshot!.observer != null) ...[
                             const SizedBox(height: 8),
                             Text(
@@ -3434,6 +3576,18 @@ class _IntroPanel extends StatelessWidget {
     final moonLabel =
         observer.isMoonVisible ? 'Moon above horizon' : 'Moon below horizon';
     return '${observer.name ?? 'Observer'}: $daylightLabel, sun ${observer.sunAltitudeDegrees.toStringAsFixed(1)} deg, moon ${observer.moonAltitudeDegrees.toStringAsFixed(1)} deg, $moonLabel.';
+  }
+
+  AstronomyBody? _planetFromSnapshot(
+    AstronomySnapshot snapshot,
+    String planetName,
+  ) {
+    for (final planet in snapshot.planets) {
+      if (planet.name == planetName) {
+        return planet;
+      }
+    }
+    return null;
   }
 
   String _formatPlaybackPresetLabel(_AstronomyPlaybackPreset preset) {
