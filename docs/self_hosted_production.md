@@ -56,8 +56,10 @@ If this is a fresh Ubuntu VPS, start with [docs/first_boot.md](first_boot.md).
 3. Set `ACME_EMAIL` in `.env.production`.
 4. Set a strong `MAYBEFLAT_POSTGRES_PASSWORD` in `.env.production`.
 5. Set a long random `MAYBEFLAT_ADMIN_TOKEN` in `.env.production`.
-6. Point Cloudflare DNS for `maybeflat.com` to the VPS public IP.
-7. Set Cloudflare SSL mode to `Full` or `Full (strict)`.
+6. Set `MAYBEFLAT_ADMIN_REQUIRE_CLOUDFLARE_ACCESS=1` in `.env.production`.
+7. Optionally set `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_EMAILS` or `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_DOMAINS`.
+8. Point Cloudflare DNS for `maybeflat.com` to the VPS public IP.
+9. Set Cloudflare SSL mode to `Full` or `Full (strict)`.
 
 ## Deploy
 
@@ -134,6 +136,15 @@ The API and Postgres containers are not exposed directly to the internet. Only C
 After deploy, open `https://maybeflat.com/admin`.
 
 That dashboard reads the protected admin analytics endpoint and requires the `MAYBEFLAT_ADMIN_TOKEN` you set in `.env.production`.
+
+For Cloudflare Access in front of `/admin`:
+
+1. In Cloudflare Zero Trust, create an Access application for `https://maybeflat.com/admin*`.
+2. Require your email or identity-provider group there.
+3. Keep `MAYBEFLAT_ADMIN_REQUIRE_CLOUDFLARE_ACCESS=1` in `.env.production`.
+4. Optionally restrict origin-side access further with `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_EMAILS` or `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_DOMAINS`.
+
+That gives you edge auth in Cloudflare plus a second admin token check at the backend.
 
 ## Updating Production
 

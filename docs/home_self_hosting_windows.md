@@ -82,11 +82,15 @@ Then edit `.env.home` and set:
 
 ```text
 CLOUDFLARE_TUNNEL_TOKEN=your-real-token-here
+MAYBEFLAT_HOME_PORT=8081
 MAYBEFLAT_HOME_RESTART_POLICY=no
 MAYBEFLAT_POSTGRES_DB=maybeflat
 MAYBEFLAT_POSTGRES_USER=maybeflat
 MAYBEFLAT_POSTGRES_PASSWORD=replace-with-a-strong-password
 MAYBEFLAT_ADMIN_TOKEN=replace-with-a-long-random-admin-token
+MAYBEFLAT_ADMIN_REQUIRE_CLOUDFLARE_ACCESS=0
+MAYBEFLAT_ADMIN_ACCESS_ALLOWED_EMAILS=
+MAYBEFLAT_ADMIN_ACCESS_ALLOWED_DOMAINS=
 MAYBEFLAT_API_WORKERS=1
 MAYBEFLAT_WARM_SCENE_DETAILS=desktop
 MAYBEFLAT_WARM_EDGE_MODES=coastline
@@ -121,6 +125,8 @@ That script will:
 5. start `cloudflared` with your tunnel token
 6. pre-render coastline tiles through zoom `4` by default
 
+If you run a separate dev clone on the same machine, set `MAYBEFLAT_HOME_PORT=8082` in that clone's `.env.home` so production can stay on `8081`.
+
 If you want to backfill more tiles after the site is already up, run the staged backfill script when the machine is idle:
 
 ```powershell
@@ -148,6 +154,15 @@ You can tune deploy-time pre-rendering with `MAYBEFLAT_PRERENDER_TILES`, `MAYBEF
 
 Once the stack is up, open `https://maybeflat.com/admin` through your Cloudflare hostname and enter the `MAYBEFLAT_ADMIN_TOKEN` from `.env.home`.
 
+If you want Cloudflare Access enforced at the backend too:
+
+1. In Cloudflare Zero Trust, create an Access application for `https://maybeflat.com/admin*`.
+2. Add your email or identity-provider policy there.
+3. Set `MAYBEFLAT_ADMIN_REQUIRE_CLOUDFLARE_ACCESS=1` in `.env.home`.
+4. Optionally set `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_EMAILS` or `MAYBEFLAT_ADMIN_ACCESS_ALLOWED_DOMAINS`.
+
+With that enabled, the admin API requires both the Maybeflat admin token and Cloudflare Access headers at the origin.
+
 ## 5. Test Locally First
 
 In PowerShell:
@@ -161,7 +176,7 @@ docker compose -f docker-compose.home.yml --env-file .env.home logs --tail=100
 
 Expected:
 
-- local homepage loads on `http://127.0.0.1:8081`
+- local homepage loads on `http://127.0.0.1:8081` or whatever `MAYBEFLAT_HOME_PORT` is set to
 - API health returns `status = ok`
 - all three containers are running
 

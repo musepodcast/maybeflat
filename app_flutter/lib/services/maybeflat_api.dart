@@ -437,13 +437,13 @@ class MaybeflatApi {
 
   Future<AdminAnalyticsOverview> loadAdminAnalyticsOverview({
     required String adminToken,
-    int windowDays = 7,
+    String window = '24h',
     int suspiciousWindowMinutes = 60,
   }) async {
     final uri = await _buildUri(
       '/admin/analytics/overview',
       queryParameters: {
-        'window_days': '$windowDays',
+        'window': window,
         'suspicious_window_minutes': '$suspiciousWindowMinutes',
       },
     );
@@ -460,5 +460,80 @@ class MaybeflatApi {
     return AdminAnalyticsOverview.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<IpDrilldown> loadAdminIpDrilldown({
+    required String adminToken,
+    required String ip,
+    String window = '24h',
+  }) async {
+    final uri = await _buildUri(
+      '/admin/analytics/ip/${Uri.encodeComponent(ip)}',
+      queryParameters: {'window': window},
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(adminToken: adminToken),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load IP drilldown: ${response.statusCode}');
+    }
+
+    return IpDrilldown.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SessionDrilldown> loadAdminSessionDrilldown({
+    required String adminToken,
+    required String sessionId,
+  }) async {
+    final uri = await _buildUri(
+      '/admin/analytics/sessions/${Uri.encodeComponent(sessionId)}',
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(adminToken: adminToken),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to load session drilldown: ${response.statusCode}',
+      );
+    }
+
+    return SessionDrilldown.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<String> downloadSuspiciousCsv({
+    required String adminToken,
+    String window = '24h',
+    int suspiciousWindowMinutes = 60,
+  }) async {
+    final uri = await _buildUri(
+      '/admin/analytics/suspicious.csv',
+      queryParameters: {
+        'window': window,
+        'suspicious_window_minutes': '$suspiciousWindowMinutes',
+      },
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(adminToken: adminToken),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to download suspicious IP CSV: ${response.statusCode}',
+      );
+    }
+
+    return response.body;
   }
 }

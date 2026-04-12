@@ -76,17 +76,23 @@ async def log_requests(request, call_next):
                 status_code=500,
                 duration_ms=duration_ms,
                 request_id=request_id,
+                response_size_bytes=0,
             )
         raise
 
     duration_ms = int((perf_counter() - started_at) * 1000)
     response.headers["X-Request-ID"] = request_id
+    response_size_bytes = 0
+    content_length = response.headers.get("content-length", "").strip()
+    if content_length.isdigit():
+        response_size_bytes = int(content_length)
     with suppress(Exception):
         track_request(
             request,
             status_code=response.status_code,
             duration_ms=duration_ms,
             request_id=request_id,
+            response_size_bytes=response_size_bytes,
         )
     return response
 

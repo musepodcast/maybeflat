@@ -57,6 +57,11 @@ if (-not (Test-Path ".env.home")) {
     throw "Missing .env.home. Copy .env.home.example to .env.home and set CLOUDFLARE_TUNNEL_TOKEN."
 }
 
+$homePort = Get-ConfigValue -Path ".env.home" -Key "MAYBEFLAT_HOME_PORT"
+if ([string]::IsNullOrWhiteSpace($homePort)) {
+    $homePort = "8081"
+}
+
 $flutterCommand = Get-Command flutter -ErrorAction SilentlyContinue
 if (-not $flutterCommand) {
     throw "Flutter is required on this machine. Install Flutter and make sure 'flutter' is on PATH."
@@ -139,5 +144,5 @@ if ($preRenderEnabled -notin @("0", "false", "False", "FALSE", "no", "No", "NO")
 
 Write-Host ""
 Write-Host "Home self-hosting stack started."
-Write-Host "Local check: http://127.0.0.1:8081"
+Write-Host "Local check: http://127.0.0.1:$homePort"
 Write-Host "Public traffic should arrive through Cloudflare Tunnel only."
