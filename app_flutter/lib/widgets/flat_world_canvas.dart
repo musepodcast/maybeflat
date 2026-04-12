@@ -10,6 +10,8 @@ import '../models/astronomy_snapshot.dart';
 import '../models/map_label.dart';
 import '../models/map_shape.dart';
 import '../models/place_marker.dart';
+import '../models/sky_catalog.dart';
+import '../services/sky_catalog_loader.dart';
 
 class MapTapLocation {
   const MapTapLocation({
@@ -347,6 +349,94 @@ Offset _projectMapPoint(Offset center, double radius, double x, double y) {
   );
 }
 
+Offset _projectLatLonPoint(
+  Offset center,
+  double mapRadius,
+  double latitude,
+  double longitude,
+) {
+  final radiusRatio = _latitudeToRadiusRatio(latitude);
+  final theta = _longitudeToThetaRadians(longitude);
+  return Offset(
+    center.dx + math.cos(theta) * mapRadius * radiusRatio,
+    center.dy + math.sin(theta) * mapRadius * radiusRatio,
+  );
+}
+
+double _normalizeSignedDegrees(double value) {
+  final normalized = (value + 540) % 360;
+  return normalized - 180;
+}
+
+double _skyLongitudeDegrees(
+  double rightAscensionHours,
+  double siderealDegrees,
+) {
+  return _normalizeSignedDegrees((rightAscensionHours * 15) - siderealDegrees);
+}
+
+Offset _projectSkyCoordinatePoint(
+  Offset center,
+  double mapRadius, {
+  required double rightAscensionHours,
+  required double declinationDegrees,
+  required double siderealDegrees,
+}) {
+  return _projectLatLonPoint(
+    center,
+    mapRadius,
+    declinationDegrees,
+    _skyLongitudeDegrees(rightAscensionHours, siderealDegrees),
+  );
+}
+
+double _hemisphereIncidence(
+  double latitude,
+  double longitude,
+  double sourceLatitude,
+  double sourceLongitude,
+) {
+  final latitudeRadians = latitude * math.pi / 180;
+  final sourceLatitudeRadians = sourceLatitude * math.pi / 180;
+  final deltaLongitude = (longitude - sourceLongitude) * math.pi / 180;
+  return math.sin(latitudeRadians) * math.sin(sourceLatitudeRadians) +
+      math.cos(latitudeRadians) *
+          math.cos(sourceLatitudeRadians) *
+          math.cos(deltaLongitude);
+}
+
+double _smoothStep(double edge0, double edge1, double value) {
+  final t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0).toDouble();
+  return t * t * (3.0 - (2.0 * t));
+}
+
+double _nightSkyVisibility(
+  AstronomySnapshot snapshot, {
+  required double latitude,
+  required double longitude,
+  bool forceVisible = false,
+}) {
+  if (forceVisible) {
+    return 1.0;
+  }
+  final sunIncidence = _hemisphereIncidence(
+    latitude,
+    longitude,
+    snapshot.sun.subpoint.latitude,
+    snapshot.sun.subpoint.longitude,
+  );
+  final daylightBlend = _smoothStep(-0.18, 0.06, sunIncidence);
+  final moonIncidence = _hemisphereIncidence(
+    latitude,
+    longitude,
+    snapshot.moon.subpoint.latitude,
+    snapshot.moon.subpoint.longitude,
+  ).clamp(0.0, 1.0);
+  final moonStrength = (snapshot.moon.illuminationFraction ?? 0) * 0.18;
+  final moonWashout = moonStrength * moonIncidence * (1.0 - daylightBlend);
+  return (1.0 - daylightBlend - moonWashout).clamp(0.0, 1.0).toDouble();
+}
+
 class _PlanetVisualStyle {
   const _PlanetVisualStyle({
     required this.pathColor,
@@ -547,6 +637,36 @@ class _SelectedShapeTarget {
   final String role;
 }
 
+enum _AstronomySelectionKind { star, constellation }
+
+class _SelectedAstronomyTarget {
+  const _SelectedAstronomyTarget({
+    required this.id,
+    required this.displayName,
+    required this.kind,
+  });
+
+  final String id;
+  final String displayName;
+  final _AstronomySelectionKind kind;
+}
+
+const Map<String, String> _zodiacGlyphs = <String, String>{
+  'aries': '♈',
+  'taurus': '♉',
+  'gemini': '♊',
+  'cancer': '♋',
+  'leo': '♌',
+  'virgo': '♍',
+  'libra': '♎',
+  'scorpius': '♏',
+  'ophiuchus': '⛎',
+  'sagittarius': '♐',
+  'capricornus': '♑',
+  'aquarius': '♒',
+  'pisces': '♓',
+};
+
 String _selectionDisplayName(String value) {
   final multipartSuffix = RegExp(r'^(.*)\s+\d+$');
   final match = multipartSuffix.firstMatch(value.trim());
@@ -702,6 +822,9 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.astronomySnapshot,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.showStars,
+    required this.showConstellations,
+    required this.showConstellationsFullSky,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
@@ -727,6 +850,9 @@ class FlatWorldCanvas extends StatefulWidget {
   final AstronomySnapshot? astronomySnapshot;
   final bool showSunPath;
   final bool showMoonPath;
+  final bool showStars;
+  final bool showConstellations;
+  final bool showConstellationsFullSky;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
@@ -760,8 +886,10 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   _ProjectedSceneCache? _projectedSceneCache;
   _OverlayAnchorCache? _overlayAnchorCache;
   AstronomySnapshot? _previousAstronomySnapshot;
+  SkyCatalog? _skyCatalog;
   bool _hasInitializedView = false;
   _SelectedShapeTarget? _selectedShape;
+  _SelectedAstronomyTarget? _selectedAstronomyTarget;
 
   bool get _shouldAnimateAstronomy =>
       widget.astronomySnapshot != null &&
@@ -787,7 +915,22 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
       initialMatrix.storage[12],
       initialMatrix.storage[13],
     );
+    _loadSkyCatalog();
     _syncAstronomyAnimation();
+  }
+
+  Future<void> _loadSkyCatalog() async {
+    try {
+      final loadedCatalog = await SkyCatalogLoader.instance.load();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _skyCatalog = loadedCatalog;
+      });
+    } catch (_) {
+      // Keep the astronomy overlay functional even if the local catalog fails.
+    }
   }
 
   @override
@@ -806,6 +949,7 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     } else if (widget.astronomySnapshot == null) {
       _previousAstronomySnapshot = null;
       _astronomyTransitionController.value = 1;
+      _selectedAstronomyTarget = null;
     }
     _syncAstronomyAnimation();
   }
@@ -987,6 +1131,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                         projectedScene: projectedScene,
                                         visibleSceneRect: visibleSceneRect,
                                         selectedShape: _selectedShape,
+                                        selectedAstronomy:
+                                            _selectedAstronomyTarget,
                                         markerAnchorPoints:
                                             overlayAnchors.markerPoints,
                                         labelAnchorPoints:
@@ -1007,10 +1153,16 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                             _previousAstronomySnapshot,
                                         astronomySnapshot:
                                             widget.astronomySnapshot,
+                                        skyCatalog: _skyCatalog,
                                         astronomyTransitionAnimation:
                                             _astronomyTransitionController,
                                         showSunPath: widget.showSunPath,
                                         showMoonPath: widget.showMoonPath,
+                                        showStars: widget.showStars,
+                                        showConstellations:
+                                            widget.showConstellations,
+                                        showConstellationsFullSky:
+                                            widget.showConstellationsFullSky,
                                         visiblePlanetNames:
                                             widget.visiblePlanetNames,
                                         astronomyObserverName:
@@ -1661,13 +1813,170 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     Offset viewportPosition,
     _ProjectedSceneCache projectedScene,
   ) {
-    final nextSelection = _resolveShapeSelection(
+    final nextAstronomySelection = _resolveAstronomySelection(
       viewportPosition,
       projectedScene,
     );
+    final nextSelection = nextAstronomySelection == null
+        ? _resolveShapeSelection(
+            viewportPosition,
+            projectedScene,
+          )
+        : null;
     setState(() {
+      _selectedAstronomyTarget = nextAstronomySelection;
       _selectedShape = nextSelection;
     });
+  }
+
+  _SelectedAstronomyTarget? _resolveAstronomySelection(
+    Offset viewportPosition,
+    _ProjectedSceneCache projectedScene,
+  ) {
+    final snapshot = widget.astronomySnapshot;
+    final catalog = _skyCatalog;
+    if (snapshot == null || catalog == null) {
+      return null;
+    }
+
+    final scenePoint = _transformationController.toScene(viewportPosition);
+    final astronomyHitDistance = 18 / _viewScale.clamp(1.0, 24.0);
+
+    if (widget.showConstellations) {
+      _SelectedAstronomyTarget? bestConstellation;
+      double? bestDistance;
+      const labelVerticalOffset = Offset(0, -12);
+      for (final constellation in catalog.constellations) {
+        final labelLongitude = _skyLongitudeDegrees(
+          constellation.labelRightAscensionHours,
+          snapshot.greenwichSiderealDegrees,
+        );
+        final labelVisibility = _nightSkyVisibility(
+          snapshot,
+          latitude: constellation.labelDeclinationDegrees,
+          longitude: labelLongitude,
+          forceVisible: widget.showConstellationsFullSky,
+        );
+        final labelPoint = _projectSkyCoordinatePoint(
+              projectedScene.center,
+              projectedScene.mapRadius,
+              rightAscensionHours: constellation.labelRightAscensionHours,
+              declinationDegrees: constellation.labelDeclinationDegrees,
+              siderealDegrees: snapshot.greenwichSiderealDegrees,
+            ) +
+            _screenOffsetToScene(labelVerticalOffset, _viewScale);
+        final labelDistance = (scenePoint - labelPoint).distance;
+        if (labelVisibility > 0.08 &&
+            labelDistance <= astronomyHitDistance * 1.4 &&
+            (bestDistance == null || labelDistance < bestDistance)) {
+          bestConstellation = _SelectedAstronomyTarget(
+            id: constellation.id,
+            displayName: constellation.name,
+            kind: _AstronomySelectionKind.constellation,
+          );
+          bestDistance = labelDistance;
+        }
+
+        for (final segment in constellation.segments) {
+          if (segment.length != 2) {
+            continue;
+          }
+          final startStar = catalog.starsById[segment[0]];
+          final endStar = catalog.starsById[segment[1]];
+          if (startStar == null || endStar == null) {
+            continue;
+          }
+          final startLongitude = _skyLongitudeDegrees(
+            startStar.rightAscensionHours,
+            snapshot.greenwichSiderealDegrees,
+          );
+          final endLongitude = _skyLongitudeDegrees(
+            endStar.rightAscensionHours,
+            snapshot.greenwichSiderealDegrees,
+          );
+          final segmentVisibility = ((_nightSkyVisibility(
+                        snapshot,
+                        latitude: startStar.declinationDegrees,
+                        longitude: startLongitude,
+                        forceVisible: widget.showConstellationsFullSky,
+                      ) +
+                      _nightSkyVisibility(
+                        snapshot,
+                        latitude: endStar.declinationDegrees,
+                        longitude: endLongitude,
+                        forceVisible: widget.showConstellationsFullSky,
+                      )) /
+                  2)
+              .toDouble();
+          if (segmentVisibility <= 0.04) {
+            continue;
+          }
+          final startPoint = _projectSkyCoordinatePoint(
+            projectedScene.center,
+            projectedScene.mapRadius,
+            rightAscensionHours: startStar.rightAscensionHours,
+            declinationDegrees: startStar.declinationDegrees,
+            siderealDegrees: snapshot.greenwichSiderealDegrees,
+          );
+          final endPoint = _projectSkyCoordinatePoint(
+            projectedScene.center,
+            projectedScene.mapRadius,
+            rightAscensionHours: endStar.rightAscensionHours,
+            declinationDegrees: endStar.declinationDegrees,
+            siderealDegrees: snapshot.greenwichSiderealDegrees,
+          );
+          final nearestPoint = _nearestPointOnSegmentForDisplay(
+            scenePoint,
+            startPoint,
+            endPoint,
+          );
+          final segmentDistance = (scenePoint - nearestPoint).distance;
+          if (segmentDistance <= astronomyHitDistance &&
+              (bestDistance == null || segmentDistance < bestDistance)) {
+            bestConstellation = _SelectedAstronomyTarget(
+              id: constellation.id,
+              displayName: constellation.name,
+              kind: _AstronomySelectionKind.constellation,
+            );
+            bestDistance = segmentDistance;
+          }
+        }
+      }
+      if (bestConstellation != null) {
+        return bestConstellation;
+      }
+    }
+
+    if (widget.showStars) {
+      _SelectedAstronomyTarget? bestStar;
+      double? bestDistance;
+      for (final star in catalog.stars) {
+        final starPoint = _projectSkyCoordinatePoint(
+          projectedScene.center,
+          projectedScene.mapRadius,
+          rightAscensionHours: star.rightAscensionHours,
+          declinationDegrees: star.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        );
+        final distance = (scenePoint - starPoint).distance;
+        if (distance > astronomyHitDistance) {
+          continue;
+        }
+        if (bestDistance == null || distance < bestDistance) {
+          bestStar = _SelectedAstronomyTarget(
+            id: star.id,
+            displayName: star.name,
+            kind: _AstronomySelectionKind.star,
+          );
+          bestDistance = distance;
+        }
+      }
+      if (bestStar != null) {
+        return bestStar;
+      }
+    }
+
+    return null;
   }
 
   _SelectedShapeTarget? _resolveShapeSelection(
@@ -2221,6 +2530,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.projectedScene,
     required this.visibleSceneRect,
     required this.selectedShape,
+    required this.selectedAstronomy,
     required this.markerAnchorPoints,
     required this.labelAnchorPoints,
     required this.markers,
@@ -2235,9 +2545,13 @@ class _FlatWorldPainter extends CustomPainter {
     required this.showStateBoundaries,
     required this.previousAstronomySnapshot,
     required this.astronomySnapshot,
+    required this.skyCatalog,
     required this.astronomyTransitionAnimation,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.showStars,
+    required this.showConstellations,
+    required this.showConstellationsFullSky,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
@@ -2251,6 +2565,7 @@ class _FlatWorldPainter extends CustomPainter {
   final _ProjectedSceneCache projectedScene;
   final Rect visibleSceneRect;
   final _SelectedShapeTarget? selectedShape;
+  final _SelectedAstronomyTarget? selectedAstronomy;
   final List<Offset> markerAnchorPoints;
   final List<Offset> labelAnchorPoints;
   final List<PlaceMarker> markers;
@@ -2265,9 +2580,13 @@ class _FlatWorldPainter extends CustomPainter {
   final bool showStateBoundaries;
   final AstronomySnapshot? previousAstronomySnapshot;
   final AstronomySnapshot? astronomySnapshot;
+  final SkyCatalog? skyCatalog;
   final Animation<double> astronomyTransitionAnimation;
   final bool showSunPath;
   final bool showMoonPath;
+  final bool showStars;
+  final bool showConstellations;
+  final bool showConstellationsFullSky;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
@@ -2283,7 +2602,11 @@ class _FlatWorldPainter extends CustomPainter {
     final mapRadius = projectedScene.mapRadius;
 
     if (astronomySnapshot != null &&
-        (showSunPath || showMoonPath || visiblePlanetNames.isNotEmpty)) {
+        (showSunPath ||
+            showMoonPath ||
+            showStars ||
+            showConstellations ||
+            visiblePlanetNames.isNotEmpty)) {
       _paintAstronomyOverlay(canvas, center, mapRadius);
     }
 
@@ -2325,6 +2648,7 @@ class _FlatWorldPainter extends CustomPainter {
       );
     }
 
+    _paintSelectedAstronomyCallout(canvas, center, mapRadius);
     _paintSelectedShapeCallout(canvas);
 
     _paintMeasurementOverlay(canvas, center, mapRadius);
@@ -2873,6 +3197,11 @@ class _FlatWorldPainter extends CustomPainter {
     return AstronomySnapshot(
       timestampUtc: current.timestampUtc,
       source: current.source,
+      greenwichSiderealDegrees: _lerpCircularDegrees(
+        previous.greenwichSiderealDegrees,
+        current.greenwichSiderealDegrees,
+        t,
+      ),
       sun: _lerpAstronomyBody(previous.sun, current.sun, t),
       moon: _lerpAstronomyBody(previous.moon, current.moon, t),
       planets: _lerpAstronomyBodies(previous.planets, current.planets, t),
@@ -2943,6 +3272,23 @@ class _FlatWorldPainter extends CustomPainter {
     return lerped;
   }
 
+  double _lerpCircularDegrees(double start, double end, double t) {
+    var delta = end - start;
+    if (delta > 180) {
+      delta -= 360;
+    } else if (delta < -180) {
+      delta += 360;
+    }
+    final lerped = start + delta * t;
+    if (lerped < 0) {
+      return lerped + 360;
+    }
+    if (lerped >= 360) {
+      return lerped - 360;
+    }
+    return lerped;
+  }
+
   void _paintAstronomyOverlay(
     Canvas canvas,
     Offset center,
@@ -2952,11 +3298,15 @@ class _FlatWorldPainter extends CustomPainter {
     if (snapshot == null) {
       return;
     }
+    final catalog = skyCatalog;
 
     canvas.save();
     canvas.clipPath(
         Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)));
     _paintAstronomyLightMesh(canvas, center, mapRadius, snapshot);
+    if (catalog != null && (showStars || showConstellations)) {
+      _paintStarSky(canvas, center, mapRadius, snapshot, catalog);
+    }
     canvas.restore();
 
     if (showSunPath) {
@@ -3005,16 +3355,18 @@ class _FlatWorldPainter extends CustomPainter {
       );
     }
 
-    _paintAstronomyBody(
-      canvas,
-      center,
-      mapRadius,
-      snapshot.sun.subpoint,
-      label: 'Sun',
-      color: const Color(0xFFF3B43F),
-      glowColor: const Color(0x77FFE28C),
-      baseRadius: 10.5,
-    );
+    if (showSunPath) {
+      _paintAstronomyBody(
+        canvas,
+        center,
+        mapRadius,
+        snapshot.sun.subpoint,
+        label: 'Sun',
+        color: const Color(0xFFF3B43F),
+        glowColor: const Color(0x77FFE28C),
+        baseRadius: 10.5,
+      );
+    }
     if (showMoonPath) {
       _paintAstronomyBody(
         canvas,
@@ -3027,6 +3379,16 @@ class _FlatWorldPainter extends CustomPainter {
         baseRadius: 8.8,
         illuminationFraction: snapshot.moon.illuminationFraction,
         lightSourcePoint: snapshot.sun.subpoint,
+      );
+    }
+
+    if (catalog != null) {
+      _paintSelectedAstronomyHighlight(
+        canvas,
+        center,
+        mapRadius,
+        snapshot,
+        catalog,
       );
     }
 
@@ -3064,6 +3426,531 @@ class _FlatWorldPainter extends CustomPainter {
         leaderColor: const Color(0xAA0F2940),
       );
     }
+  }
+
+  void _paintStarSky(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+    AstronomySnapshot snapshot,
+    SkyCatalog catalog,
+  ) {
+    if (showStars) {
+      _paintStarField(canvas, center, mapRadius, snapshot, catalog);
+    }
+    if (showConstellations) {
+      _paintConstellationOverlay(canvas, center, mapRadius, snapshot, catalog);
+    }
+  }
+
+  void _paintStarField(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+    AstronomySnapshot snapshot,
+    SkyCatalog catalog,
+  ) {
+    for (final star in catalog.stars) {
+      final isPolaris = star.id == 'polaris';
+      final skyPoint = _projectSkyCoordinate(
+        center,
+        mapRadius,
+        rightAscensionHours: star.rightAscensionHours,
+        declinationDegrees: star.declinationDegrees,
+        siderealDegrees: snapshot.greenwichSiderealDegrees,
+      );
+      final nightVisibility = _nightSkyVisibility(
+        snapshot,
+        latitude: star.declinationDegrees,
+        longitude: _skyLongitudeForSnapshot(
+          star.rightAscensionHours,
+          snapshot.greenwichSiderealDegrees,
+        ),
+      );
+      if (nightVisibility <= 0.02) {
+        continue;
+      }
+
+      final brightness = _starBrightness(star.magnitude) * nightVisibility;
+      if (brightness <= 0.03) {
+        continue;
+      }
+
+      final baseRadius = ui.lerpDouble(
+            0.65,
+            isPolaris ? 3.6 : 2.25,
+            _starBrightness(star.magnitude),
+          ) ??
+          (isPolaris ? 2.4 : 1.0);
+      final starRadius =
+          _screenStableRadius(baseRadius, viewScale, minRadius: 0.38);
+      final glowRadius = _screenStableRadius(
+        baseRadius * (isPolaris ? 3.2 : 2.3),
+        viewScale,
+        minRadius: isPolaris ? 1.5 : 0.9,
+      );
+      final glowAlpha =
+          ((isPolaris ? 72 : 22) + ((isPolaris ? 120 : 70) * brightness))
+              .round()
+              .clamp(0, 255);
+      final coreAlpha =
+          ((isPolaris ? 168 : 52) + ((isPolaris ? 84 : 180) * brightness))
+              .round()
+              .clamp(0, 255);
+
+      canvas.drawCircle(
+        skyPoint,
+        glowRadius,
+        Paint()
+          ..color = isPolaris
+              ? Color.fromARGB(glowAlpha.toInt(), 168, 212, 255)
+              : Color.fromARGB(glowAlpha.toInt(), 207, 227, 255),
+      );
+      canvas.drawCircle(
+        skyPoint,
+        starRadius,
+        Paint()
+          ..color = isPolaris
+              ? Color.fromARGB(coreAlpha.toInt(), 245, 250, 255)
+              : Color.fromARGB(coreAlpha.toInt(), 248, 251, 255),
+      );
+
+      if (isPolaris && viewScale >= 1.5 && !isInteracting) {
+        final labelPainter = TextPainter(
+          text: TextSpan(
+            text: star.name,
+            style: TextStyle(
+              color: const Color(0xFF173042),
+              fontSize: _layerLabelFontSize('city_major', viewScale),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: 120);
+        _paintAnchoredPointLabel(
+          canvas: canvas,
+          anchorPoint: skyPoint,
+          labelPainter: labelPainter,
+          labelOffsetInScreen: const Offset(14, -12),
+          dotRadius: starRadius,
+          dotPaint: Paint()
+            ..color = Color.fromARGB(coreAlpha.toInt(), 245, 250, 255),
+          leaderColor: const Color(0xAA173042),
+        );
+      }
+    }
+  }
+
+  void _paintConstellationOverlay(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+    AstronomySnapshot snapshot,
+    SkyCatalog catalog,
+  ) {
+    final linePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = _screenStableRadius(1.45, viewScale, minRadius: 0.58)
+      ..isAntiAlias = true;
+    final guideUnderlayPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = _screenStableRadius(2.7, viewScale, minRadius: 0.95)
+      ..isAntiAlias = true;
+    const labelVerticalOffset = Offset(0, -12);
+
+    for (final constellation in catalog.constellations) {
+      for (final segment in constellation.segments) {
+        if (segment.length != 2) {
+          continue;
+        }
+        final startStar = catalog.starsById[segment[0]];
+        final endStar = catalog.starsById[segment[1]];
+        if (startStar == null || endStar == null) {
+          continue;
+        }
+
+        final startLongitude = _skyLongitudeForSnapshot(
+          startStar.rightAscensionHours,
+          snapshot.greenwichSiderealDegrees,
+        );
+        final endLongitude = _skyLongitudeForSnapshot(
+          endStar.rightAscensionHours,
+          snapshot.greenwichSiderealDegrees,
+        );
+        final segmentVisibility = ((_nightSkyVisibility(
+                  snapshot,
+                  latitude: startStar.declinationDegrees,
+                  longitude: startLongitude,
+                  forceVisible: showConstellationsFullSky,
+                ) +
+                _nightSkyVisibility(
+                  snapshot,
+                  latitude: endStar.declinationDegrees,
+                  longitude: endLongitude,
+                  forceVisible: showConstellationsFullSky,
+                )) /
+            2);
+        if (segmentVisibility <= 0.04) {
+          continue;
+        }
+
+        guideUnderlayPaint.color = Color.fromARGB(
+          (92 + (104 * segmentVisibility)).round().clamp(0, 255).toInt(),
+          15,
+          23,
+          32,
+        );
+        linePaint
+          ..color = Color.fromARGB(
+            (138 + (100 * segmentVisibility)).round().clamp(0, 255).toInt(),
+            182,
+            136,
+            255,
+          )
+          ..strokeWidth =
+              _screenStableRadius(1.45, viewScale, minRadius: 0.58);
+
+        final startPoint = _projectSkyCoordinate(
+          center,
+          mapRadius,
+          rightAscensionHours: startStar.rightAscensionHours,
+          declinationDegrees: startStar.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        );
+        final endPoint = _projectSkyCoordinate(
+          center,
+          mapRadius,
+          rightAscensionHours: endStar.rightAscensionHours,
+          declinationDegrees: endStar.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        );
+        canvas.drawLine(
+          startPoint,
+          endPoint,
+          guideUnderlayPaint,
+        );
+        canvas.drawLine(
+          startPoint,
+          endPoint,
+          linePaint,
+        );
+      }
+
+      final labelLongitude = _skyLongitudeForSnapshot(
+        constellation.labelRightAscensionHours,
+        snapshot.greenwichSiderealDegrees,
+      );
+      final labelVisibility = _nightSkyVisibility(
+        snapshot,
+        latitude: constellation.labelDeclinationDegrees,
+        longitude: labelLongitude,
+        forceVisible: showConstellationsFullSky,
+      );
+      if (labelVisibility <= 0.08) {
+        continue;
+      }
+
+      final labelPainter = TextPainter(
+        text: TextSpan(
+          text: constellation.name,
+          style: TextStyle(
+            color: const Color(0xFF173042),
+            fontSize: _layerLabelFontSize('city_major', viewScale),
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.15,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 120);
+
+      final labelCenter = _projectSkyCoordinate(
+            center,
+            mapRadius,
+            rightAscensionHours: constellation.labelRightAscensionHours,
+            declinationDegrees: constellation.labelDeclinationDegrees,
+            siderealDegrees: snapshot.greenwichSiderealDegrees,
+          ) +
+          _screenOffsetToScene(labelVerticalOffset, viewScale);
+      _paintUprightLabel(
+        canvas: canvas,
+        center: labelCenter,
+        labelPainter: labelPainter,
+      );
+    }
+  }
+
+  void _paintSelectedAstronomyHighlight(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+    AstronomySnapshot snapshot,
+    SkyCatalog catalog,
+  ) {
+    final selection = selectedAstronomy;
+    if (selection == null) {
+      return;
+    }
+    if (selection.kind == _AstronomySelectionKind.star && !showStars) {
+      return;
+    }
+    if (selection.kind == _AstronomySelectionKind.constellation &&
+        !showConstellations) {
+      return;
+    }
+
+    if (selection.kind == _AstronomySelectionKind.star) {
+      final star = catalog.starsById[selection.id];
+      if (star == null) {
+        return;
+      }
+      final starPoint = _projectSkyCoordinate(
+        center,
+        mapRadius,
+        rightAscensionHours: star.rightAscensionHours,
+        declinationDegrees: star.declinationDegrees,
+        siderealDegrees: snapshot.greenwichSiderealDegrees,
+      );
+      canvas.drawCircle(
+        starPoint,
+        _screenStableRadius(10.0, viewScale, minRadius: 4.2),
+        Paint()..color = const Color(0x449B6DFF),
+      );
+      canvas.drawCircle(
+        starPoint,
+        _screenStableRadius(6.0, viewScale, minRadius: 2.4),
+        Paint()
+          ..color = const Color(0xFF9B6DFF)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = _screenStableRadius(1.6, viewScale, minRadius: 0.7),
+      );
+      return;
+    }
+
+    final matches = catalog.constellations.where((entry) => entry.id == selection.id);
+    if (matches.isEmpty) {
+      return;
+    }
+    final constellation = matches.first;
+    final highlightPaint = Paint()
+      ..color = const Color(0xFF9B6DFF)
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = _screenStableRadius(2.2, viewScale, minRadius: 0.95)
+      ..isAntiAlias = true;
+    for (final segment in constellation.segments) {
+      if (segment.length != 2) {
+        continue;
+      }
+      final startStar = catalog.starsById[segment[0]];
+      final endStar = catalog.starsById[segment[1]];
+      if (startStar == null || endStar == null) {
+        continue;
+      }
+      canvas.drawLine(
+        _projectSkyCoordinate(
+          center,
+          mapRadius,
+          rightAscensionHours: startStar.rightAscensionHours,
+          declinationDegrees: startStar.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        ),
+        _projectSkyCoordinate(
+          center,
+          mapRadius,
+          rightAscensionHours: endStar.rightAscensionHours,
+          declinationDegrees: endStar.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        ),
+        highlightPaint,
+      );
+    }
+    for (final starId in constellation.starIds) {
+      final star = catalog.starsById[starId];
+      if (star == null) {
+        continue;
+      }
+      canvas.drawCircle(
+        _projectSkyCoordinate(
+          center,
+          mapRadius,
+          rightAscensionHours: star.rightAscensionHours,
+          declinationDegrees: star.declinationDegrees,
+          siderealDegrees: snapshot.greenwichSiderealDegrees,
+        ),
+        _screenStableRadius(4.4, viewScale, minRadius: 1.8),
+        Paint()..color = const Color(0x559B6DFF),
+      );
+    }
+  }
+
+  void _paintSelectedAstronomyCallout(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+  ) {
+    final selection = selectedAstronomy;
+    final snapshot = astronomySnapshot;
+    final catalog = skyCatalog;
+    if (selection == null || snapshot == null || catalog == null) {
+      return;
+    }
+    if (selection.kind == _AstronomySelectionKind.star && !showStars) {
+      return;
+    }
+    if (selection.kind == _AstronomySelectionKind.constellation &&
+        !showConstellations) {
+      return;
+    }
+
+    Offset? anchorPoint;
+    if (selection.kind == _AstronomySelectionKind.star) {
+      final star = catalog.starsById[selection.id];
+      if (star == null) {
+        return;
+      }
+      anchorPoint = _projectSkyCoordinate(
+        center,
+        mapRadius,
+        rightAscensionHours: star.rightAscensionHours,
+        declinationDegrees: star.declinationDegrees,
+        siderealDegrees: snapshot.greenwichSiderealDegrees,
+      );
+    } else {
+      final matches = catalog.constellations.where((entry) => entry.id == selection.id);
+      if (matches.isEmpty) {
+        return;
+      }
+      final constellation = matches.first;
+      anchorPoint = _projectSkyCoordinate(
+        center,
+        mapRadius,
+        rightAscensionHours: constellation.labelRightAscensionHours,
+        declinationDegrees: constellation.labelDeclinationDegrees,
+        siderealDegrees: snapshot.greenwichSiderealDegrees,
+      );
+    }
+
+    final zodiacGlyph = selection.kind == _AstronomySelectionKind.constellation
+        ? _zodiacGlyphs[selection.id]
+        : null;
+    final glyphPainter = zodiacGlyph == null
+        ? null
+        : (TextPainter(
+            text: TextSpan(
+              text: zodiacGlyph,
+              style: TextStyle(
+                color: const Color(0xFF6E4BD8),
+                fontSize:
+                    (_layerLabelFontSize('continent', viewScale) + 8) * 0.75,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout(maxWidth: 80));
+    final labelCenter = anchorPoint! +
+        _screenOffsetToScene(
+          selection.kind == _AstronomySelectionKind.constellation
+              ? const Offset(30, -6)
+              : const Offset(16, -18),
+          viewScale,
+        );
+    if (selection.kind == _AstronomySelectionKind.constellation &&
+        glyphPainter != null) {
+      _paintUprightLabel(
+        canvas: canvas,
+        center: labelCenter,
+        labelPainter: glyphPainter,
+      );
+      return;
+    }
+
+    final labelPainter = TextPainter(
+      text: TextSpan(
+        text: selection.displayName,
+        style: TextStyle(
+          color: const Color(0xFF0F1720),
+          fontSize: _layerLabelFontSize('state', viewScale),
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 190);
+    final background = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: labelCenter,
+        width: labelPainter.width + 18,
+        height: labelPainter.height + 10,
+      ),
+      const Radius.circular(999),
+    );
+    _paintUprightLabel(
+      canvas: canvas,
+      center: labelCenter,
+      labelPainter: labelPainter,
+      background: background,
+      backgroundPaint: Paint()..color = const Color(0xECF8F3E8),
+    );
+  }
+
+  Offset _projectSkyCoordinate(
+    Offset center,
+    double mapRadius, {
+    required double rightAscensionHours,
+    required double declinationDegrees,
+    required double siderealDegrees,
+  }) {
+    return _projectSkyCoordinatePoint(
+      center,
+      mapRadius,
+      rightAscensionHours: rightAscensionHours,
+      declinationDegrees: declinationDegrees,
+      siderealDegrees: siderealDegrees,
+    );
+  }
+
+  double _skyLongitudeForSnapshot(
+    double rightAscensionHours,
+    double siderealDegrees,
+  ) {
+    return _skyLongitudeDegrees(rightAscensionHours, siderealDegrees);
+  }
+
+  double _starBrightness(double magnitude) {
+    final clampedMagnitude = magnitude.clamp(-1.5, 5.5).toDouble();
+    final normalized = 1.0 - ((clampedMagnitude + 1.5) / 7.0);
+    return normalized.clamp(0.1, 1.0);
+  }
+
+  double _nightSkyVisibility(
+    AstronomySnapshot snapshot, {
+    required double latitude,
+    required double longitude,
+    bool forceVisible = false,
+  }) {
+    if (forceVisible) {
+      return 1.0;
+    }
+    final sunIncidence = _hemisphereIncidence(
+      latitude,
+      longitude,
+      snapshot.sun.subpoint.latitude,
+      snapshot.sun.subpoint.longitude,
+    );
+    final daylightBlend = _smoothStep(-0.18, 0.06, sunIncidence);
+    final moonIncidence = _hemisphereIncidence(
+      latitude,
+      longitude,
+      snapshot.moon.subpoint.latitude,
+      snapshot.moon.subpoint.longitude,
+    ).clamp(0.0, 1.0);
+    final moonStrength = (snapshot.moon.illuminationFraction ?? 0) * 0.18;
+    final moonWashout = moonStrength * moonIncidence * (1.0 - daylightBlend);
+    return (1.0 - daylightBlend - moonWashout).clamp(0.0, 1.0).toDouble();
   }
 
   void _paintAstronomyLightMesh(
@@ -3781,6 +4668,7 @@ class _FlatWorldPainter extends CustomPainter {
     return oldDelegate.projectedScene != projectedScene ||
         oldDelegate.visibleSceneRect != visibleSceneRect ||
         oldDelegate.selectedShape != selectedShape ||
+        oldDelegate.selectedAstronomy != selectedAstronomy ||
         oldDelegate.markers != markers ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.gridStepDegrees != gridStepDegrees ||
@@ -3790,8 +4678,12 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.showStateBoundaries != showStateBoundaries ||
         oldDelegate.previousAstronomySnapshot != previousAstronomySnapshot ||
         oldDelegate.astronomySnapshot != astronomySnapshot ||
+        oldDelegate.skyCatalog != skyCatalog ||
         oldDelegate.showSunPath != showSunPath ||
         oldDelegate.showMoonPath != showMoonPath ||
+        oldDelegate.showStars != showStars ||
+        oldDelegate.showConstellations != showConstellations ||
+        oldDelegate.showConstellationsFullSky != showConstellationsFullSky ||
         !listEquals(oldDelegate.visiblePlanetNames, visiblePlanetNames) ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||
         oldDelegate.routePoints != routePoints ||

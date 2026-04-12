@@ -72,6 +72,7 @@ class AstronomySnapshot {
   const AstronomySnapshot({
     required this.timestampUtc,
     required this.source,
+    required this.greenwichSiderealDegrees,
     required this.sun,
     required this.moon,
     required this.planets,
@@ -80,6 +81,7 @@ class AstronomySnapshot {
 
   final DateTime timestampUtc;
   final String source;
+  final double greenwichSiderealDegrees;
   final AstronomyBody sun;
   final AstronomyBody moon;
   final List<AstronomyBody> planets;
@@ -92,6 +94,8 @@ class AstronomySnapshot {
             DateTime.now().toUtc().toIso8601String(),
       ).toUtc(),
       source: json['source'] as String? ?? 'Astronomy snapshot',
+      greenwichSiderealDegrees:
+          (json['greenwich_sidereal_degrees'] as num?)?.toDouble() ?? 0,
       sun: AstronomyBody.fromJson(
         json['sun'] as Map<String, dynamic>? ?? const <String, dynamic>{},
       ),

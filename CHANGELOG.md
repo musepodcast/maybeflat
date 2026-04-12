@@ -4,6 +4,16 @@ All notable changes to this project should be recorded in this file.
 
 The format is intentionally simple and release-focused.
 
+## [1.6.0] - 2026-04-12
+
+Astronomy sky overlay release.
+
+- Added sidereal-time star and zodiac constellation overlays driven by a client-side sky catalog
+- Added constellation labels, full-sky guide mode, and star/constellation tap selection with focused highlights
+- Added zodiac symbol and illustration rendering for selected constellations plus improved Polaris visibility
+- Added astronomy playback and custom-time fixes so returning to current time resets the live view cleanly
+- Removed the seeded North Pole marker so Polaris is easier to see at the center of the map
+
 ## [1.4.1] - 2026-04-11
 
 Analyzer cleanup patch for the analytics release.

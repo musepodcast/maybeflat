@@ -1,5 +1,4 @@
 SEED_MARKERS = [
-    {"name": "North Pole", "latitude": 90.0, "longitude": 0.0},
     {"name": "Chicago", "latitude": 41.8781, "longitude": -87.6298},
     {"name": "Quito", "latitude": -0.1807, "longitude": -78.4678},
     {"name": "Sydney", "latitude": -33.8688, "longitude": 151.2093},

@@ -141,6 +141,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showStateBoundaries = true;
   bool _showSunPath = true;
   bool _showMoonPath = true;
+  bool _showStars = false;
+  bool _showConstellations = false;
+  bool _showConstellationsFullSky = false;
   final Map<String, bool> _planetVisibility = <String, bool>{
     for (final planetName in _astronomyPlanetNames) planetName: false,
   };
@@ -709,13 +712,20 @@ class _HomeScreenState extends State<HomeScreen> {
       .toList(growable: false);
 
   bool get _shouldShowAstronomy =>
-      _showSunPath || _showMoonPath || _showAnyPlanets;
+      _showSunPath ||
+      _showMoonPath ||
+      _showStars ||
+      _showConstellations ||
+      _showAnyPlanets;
 
   Map<String, dynamic> _astronomyVisibilityProperties() {
     final visiblePlanets = _visiblePlanetNames;
     return <String, dynamic>{
       'sun_path': _showSunPath,
       'moon_path': _showMoonPath,
+      'stars': _showStars,
+      'constellations': _showConstellations,
+      'constellations_full_sky': _showConstellationsFullSky,
       'visible_planet_count': visiblePlanets.length,
       'visible_planets': visiblePlanets,
     };
@@ -767,6 +777,22 @@ class _HomeScreenState extends State<HomeScreen> {
       _AstronomyPlaybackSpeed.fast => const Duration(hours: 1),
       _AstronomyPlaybackSpeed.veryFast => const Duration(hours: 6),
     };
+  }
+
+  void _resetAstronomyPlaybackDefaults({DateTime? referenceTime}) {
+    final baseTime = referenceTime ?? DateTime.now();
+    final duration = _astronomyPlaybackPresetDuration(
+      _AstronomyPlaybackPreset.oneDay,
+    );
+    final halfDuration = Duration(
+      milliseconds: math.max(1, duration.inMilliseconds ~/ 2),
+    );
+    _astronomyPlaybackPreset = _AstronomyPlaybackPreset.oneDay;
+    _astronomyPlaybackSpeed = _AstronomyPlaybackSpeed.normal;
+    _astronomyPlaybackStart = baseTime.subtract(halfDuration);
+    _astronomyPlaybackEnd = _astronomyPlaybackStart.add(duration);
+    _astronomyCustomTime = baseTime;
+    _syncAstronomyPlaybackTime();
   }
 
   DateTime _astronomyTimestampUtc() {
@@ -1131,6 +1157,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _setAstronomyToggle({
     bool? showSunPath,
     bool? showMoonPath,
+    bool? showStars,
+    bool? showConstellations,
+    bool? showConstellationsFullSky,
   }) {
     final wasShowingAstronomy = _shouldShowAstronomy;
     setState(() {
@@ -1139,6 +1168,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (showMoonPath != null) {
         _showMoonPath = showMoonPath;
+      }
+      if (showStars != null) {
+        _showStars = showStars;
+      }
+      if (showConstellations != null) {
+        _showConstellations = showConstellations;
+      }
+      if (showConstellationsFullSky != null) {
+        _showConstellationsFullSky = showConstellationsFullSky;
       }
       if (!_shouldShowAstronomy) {
         _astronomySnapshot = null;
@@ -1200,16 +1238,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _setAstronomyTimeMode(_AstronomyTimeMode mode) {
+    final switchingToCurrent = mode == _AstronomyTimeMode.current;
+    _astronomyPlaybackTimer?.cancel();
+    _astronomyPlaybackTimer = null;
     setState(() {
       _astronomyTimeMode = mode;
-      if (mode == _AstronomyTimeMode.custom) {
+      _isAstronomyPlaying = false;
+      if (switchingToCurrent) {
+        _resetAstronomyPlaybackDefaults(referenceTime: DateTime.now());
+      } else {
         _syncAstronomyPlaybackTime();
         _astronomyCustomTime = _astronomyPlaybackCurrentTime();
       }
     });
-    if (mode == _AstronomyTimeMode.current) {
-      _stopAstronomyPlayback();
-    }
     _syncAstronomyTimer();
     if (_shouldShowAstronomy) {
       _loadAstronomy();
@@ -1782,6 +1823,9 @@ class _HomeScreenState extends State<HomeScreen> {
           showStateBoundaries: _showStateBoundaries,
           showSunPath: _showSunPath,
           showMoonPath: _showMoonPath,
+          showStars: _showStars,
+          showConstellations: _showConstellations,
+          showConstellationsFullSky: _showConstellationsFullSky,
           allPlanetsVisible: _allPlanetsVisible,
           planetVisibility: _planetVisibility,
           astronomyTimeMode: _astronomyTimeMode,
@@ -1824,7 +1868,10 @@ class _HomeScreenState extends State<HomeScreen> {
             _astronomyPlaybackEnd.toUtc(),
           ),
           astronomyPlaybackCurrentLabel: _formatAstronomyTimeLabel(
-            _astronomyCustomTime.toUtc(),
+            (_astronomyTimeMode == _AstronomyTimeMode.current
+                    ? DateTime.now()
+                    : _astronomyCustomTime)
+                .toUtc(),
           ),
           astronomyPlaybackProgress: _astronomyPlaybackProgress,
           astronomyPlaybackPreset: _astronomyPlaybackPreset,
@@ -1887,6 +1934,12 @@ class _HomeScreenState extends State<HomeScreen> {
               _setAstronomyToggle(showSunPath: value),
           onShowMoonPathChanged: (value) =>
               _setAstronomyToggle(showMoonPath: value),
+          onShowStarsChanged: (value) => _setAstronomyToggle(showStars: value),
+          onShowConstellationsChanged: (value) =>
+              _setAstronomyToggle(showConstellations: value),
+          onShowConstellationsFullSkyChanged: (value) => _setAstronomyToggle(
+            showConstellationsFullSky: value,
+          ),
           onShowAllPlanetsChanged: _setAllPlanetsVisibility,
           onShowPlanetChanged: _setPlanetVisibility,
           onAstronomyTimeModeChanged: (value) {
@@ -1994,6 +2047,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         astronomySnapshot: _astronomySnapshot,
                         showSunPath: _showSunPath,
                         showMoonPath: _showMoonPath,
+                        showStars: _showStars,
+                        showConstellations: _showConstellations,
+                        showConstellationsFullSky: _showConstellationsFullSky,
                         visiblePlanetNames: _visiblePlanetNames,
                         astronomyObserverName: _astronomyObserver?.displayName,
                         routePoints: _activeRoutePoints,
@@ -2223,6 +2279,9 @@ class _IntroPanel extends StatelessWidget {
     required this.showStateBoundaries,
     required this.showSunPath,
     required this.showMoonPath,
+    required this.showStars,
+    required this.showConstellations,
+    required this.showConstellationsFullSky,
     required this.allPlanetsVisible,
     required this.planetVisibility,
     required this.astronomyTimeMode,
@@ -2283,6 +2342,9 @@ class _IntroPanel extends StatelessWidget {
     required this.onShowStateBoundariesChanged,
     required this.onShowSunPathChanged,
     required this.onShowMoonPathChanged,
+    required this.onShowStarsChanged,
+    required this.onShowConstellationsChanged,
+    required this.onShowConstellationsFullSkyChanged,
     required this.onShowAllPlanetsChanged,
     required this.onShowPlanetChanged,
     required this.onAstronomyTimeModeChanged,
@@ -2321,6 +2383,9 @@ class _IntroPanel extends StatelessWidget {
   final bool showStateBoundaries;
   final bool showSunPath;
   final bool showMoonPath;
+  final bool showStars;
+  final bool showConstellations;
+  final bool showConstellationsFullSky;
   final bool allPlanetsVisible;
   final Map<String, bool> planetVisibility;
   final _AstronomyTimeMode astronomyTimeMode;
@@ -2381,6 +2446,9 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowStateBoundariesChanged;
   final ValueChanged<bool> onShowSunPathChanged;
   final ValueChanged<bool> onShowMoonPathChanged;
+  final ValueChanged<bool> onShowStarsChanged;
+  final ValueChanged<bool> onShowConstellationsChanged;
+  final ValueChanged<bool> onShowConstellationsFullSkyChanged;
   final ValueChanged<bool> onShowAllPlanetsChanged;
   final void Function(String planetName, bool isVisible) onShowPlanetChanged;
   final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
@@ -2571,6 +2639,35 @@ class _IntroPanel extends StatelessWidget {
                     value: showMoonPath,
                     title: const Text('Moon path'),
                     onChanged: onShowMoonPathChanged,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showStars,
+                    title: const Text('Stars'),
+                    subtitle: const Text(
+                      'Bright stars fade through twilight and rotate with sidereal time.',
+                    ),
+                    onChanged: onShowStarsChanged,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showConstellations,
+                    title: const Text('Constellations'),
+                    subtitle: const Text(
+                      'Shows the 13 zodiac constellations, including Ophiuchus.',
+                    ),
+                    onChanged: onShowConstellationsChanged,
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showConstellationsFullSky,
+                    title: const Text('Complete constellation guide'),
+                    subtitle: const Text(
+                      'Keeps the full zodiac outlines visible on the sunlit side too.',
+                    ),
+                    onChanged: showConstellations
+                        ? onShowConstellationsFullSkyChanged
+                        : null,
                   ),
                   const SizedBox(height: 6),
                   const Text(
@@ -2769,8 +2866,10 @@ class _IntroPanel extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: isAstronomyPlaying ||
-                                  astronomyPlaybackProgress > 0
+                          onPressed: astronomyTimeMode ==
+                                      _AstronomyTimeMode.custom &&
+                                  (isAstronomyPlaying ||
+                                      astronomyPlaybackProgress > 0)
                               ? onAstronomyPlaybackStop
                               : null,
                           child: const Text('Restart'),

@@ -725,6 +725,7 @@ def _get_snapshot_cached(
     return AstronomySnapshotResponse(
         timestamp_utc=timestamp_utc.isoformat().replace("+00:00", "Z"),
         source="Approximate live astronomy from UTC time, solar geometry, lunar ephemeris, and J2000 planetary elements.",
+        greenwich_sidereal_degrees=round(gmst, 6),
         sun=AstronomyBodyResponse(
             name="Sun",
             subpoint=sun_subpoint,

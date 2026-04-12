@@ -119,6 +119,7 @@ class AstronomyObserverResponse(BaseModel):
 class AstronomySnapshotResponse(BaseModel):
     timestamp_utc: str
     source: str
+    greenwich_sidereal_degrees: float
     sun: AstronomyBodyResponse
     moon: AstronomyBodyResponse
     planets: list[AstronomyBodyResponse] = Field(default_factory=list)
