@@ -956,343 +956,307 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
 
   @override
   Widget build(BuildContext context) {
-    final isCompactScreen = MediaQuery.sizeOf(context).width < 720;
-    final outerCornerRadius = isCompactScreen ? 28.0 : 36.0;
-    final innerCornerRadius = isCompactScreen ? 22.0 : 28.0;
-    final canvasPadding = isCompactScreen ? 8.0 : 20.0;
     return AspectRatio(
       aspectRatio: 1,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(outerCornerRadius),
-          gradient: const RadialGradient(
-            colors: [
-              Color(0xFFF8F4E7),
-              Color(0xFFD3E1E6),
-              Color(0xFF8FB2BF),
-            ],
-            stops: [0.15, 0.6, 1.0],
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x22000000),
-              blurRadius: 24,
-              offset: Offset(0, 12),
-            ),
-          ],
-        ),
-        padding: EdgeInsets.all(canvasPadding),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(innerCornerRadius),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              if (!constraints.hasBoundedWidth ||
-                  !constraints.hasBoundedHeight ||
-                  !constraints.maxWidth.isFinite ||
-                  !constraints.maxHeight.isFinite ||
-                  constraints.maxWidth <= 0 ||
-                  constraints.maxHeight <= 0) {
-                return const SizedBox.expand();
-              }
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (!constraints.hasBoundedWidth ||
+              !constraints.hasBoundedHeight ||
+              !constraints.maxWidth.isFinite ||
+              !constraints.maxHeight.isFinite ||
+              constraints.maxWidth <= 0 ||
+              constraints.maxHeight <= 0) {
+            return const SizedBox.expand();
+          }
 
-              _latestViewportSize = constraints.biggest;
-              if (!_hasInitializedView) {
-                _hasInitializedView = true;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted || _latestViewportSize == null) {
-                    return;
+          _latestViewportSize = constraints.biggest;
+          if (!_hasInitializedView) {
+            _hasInitializedView = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _latestViewportSize == null) {
+                return;
+              }
+              _applyDefaultView(_latestViewportSize!);
+            });
+          }
+
+          final isCompactViewport = constraints.maxWidth < 560;
+          final projectedScene = _ensureProjectedSceneCache(
+            constraints.biggest,
+          );
+          final overlayAnchors = _ensureOverlayAnchorCache(projectedScene);
+          final hasTileBase = widget.shapes.isNotEmpty;
+          final tileZoom = _tileZoomForViewScale(_viewScale);
+          final visibleSceneRect = _visibleSceneRect(constraints.biggest);
+          final tileRange = _visibleTileRange(
+            viewportSize: constraints.biggest,
+            visibleSceneRect: visibleSceneRect,
+            tileZoom: tileZoom,
+          );
+          if (hasTileBase && !_isInteracting) {
+            _scheduleTilePrefetch(
+              context: context,
+              isCompactViewport: isCompactViewport,
+              tileZoom: tileZoom,
+              tileRange: tileRange,
+            );
+          }
+          return Stack(
+            children: [
+              MouseRegion(
+                onExit: (_) {
+                  if (_hoveredGridPoint != null && mounted) {
+                    setState(() {
+                      _hoveredGridPoint = null;
+                    });
                   }
-                  _applyDefaultView(_latestViewportSize!);
-                });
-              }
-
-              final isCompactViewport = constraints.maxWidth < 560;
-              final projectedScene = _ensureProjectedSceneCache(
-                constraints.biggest,
-              );
-              final overlayAnchors = _ensureOverlayAnchorCache(projectedScene);
-              final hasTileBase = widget.shapes.isNotEmpty;
-              final tileZoom = _tileZoomForViewScale(_viewScale);
-              final visibleSceneRect = _visibleSceneRect(constraints.biggest);
-              final tileRange = _visibleTileRange(
-                viewportSize: constraints.biggest,
-                visibleSceneRect: visibleSceneRect,
-                tileZoom: tileZoom,
-              );
-              if (hasTileBase && !_isInteracting) {
-                _scheduleTilePrefetch(
-                  context: context,
-                  isCompactViewport: isCompactViewport,
-                  tileZoom: tileZoom,
-                  tileRange: tileRange,
-                );
-              }
-              return Stack(
-                children: [
-                  MouseRegion(
-                    onExit: (_) {
-                      if (_hoveredGridPoint != null && mounted) {
-                        setState(() {
-                          _hoveredGridPoint = null;
-                        });
-                      }
-                    },
-                    onHover: (event) {
-                      final hovered = widget.showGrid
-                          ? _resolveHoveredGridIntersection(
-                              event.localPosition,
-                              constraints.biggest,
+                },
+                onHover: (event) {
+                  final hovered = widget.showGrid
+                      ? _resolveHoveredGridIntersection(
+                          event.localPosition,
+                          constraints.biggest,
+                        )
+                      : null;
+                  final isSameHover = hovered != null &&
+                      _hoveredGridPoint != null &&
+                      hovered.latitude == _hoveredGridPoint!.latitude &&
+                      hovered.longitude == _hoveredGridPoint!.longitude &&
+                      (hovered.anchor - _hoveredGridPoint!.anchor).distance < 8;
+                  if (mounted &&
+                      !isSameHover &&
+                      (hovered != null || _hoveredGridPoint != null)) {
+                    setState(() {
+                      _hoveredGridPoint = hovered;
+                    });
+                  }
+                },
+                child: Listener(
+                  onPointerSignal: (pointerSignal) {
+                    if (pointerSignal is PointerScrollEvent) {
+                      _handleScrollZoom(
+                        pointerSignal.localPosition,
+                        pointerSignal.scrollDelta.dy,
+                      );
+                    }
+                  },
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.deferToChild,
+                    onTapUp: widget.activePickLabel == null
+                        ? (details) => _handleCanvasTap(
+                              details.localPosition,
+                              projectedScene,
                             )
-                          : null;
-                      final isSameHover = hovered != null &&
-                          _hoveredGridPoint != null &&
-                          hovered.latitude == _hoveredGridPoint!.latitude &&
-                          hovered.longitude == _hoveredGridPoint!.longitude &&
-                          (hovered.anchor - _hoveredGridPoint!.anchor)
-                                  .distance <
-                              8;
-                      if (mounted &&
-                          !isSameHover &&
-                          (hovered != null || _hoveredGridPoint != null)) {
-                        setState(() {
-                          _hoveredGridPoint = hovered;
-                        });
-                      }
-                    },
-                    child: Listener(
-                      onPointerSignal: (pointerSignal) {
-                        if (pointerSignal is PointerScrollEvent) {
-                          _handleScrollZoom(
-                            pointerSignal.localPosition,
-                            pointerSignal.scrollDelta.dy,
-                          );
-                        }
-                      },
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.deferToChild,
-                        onTapUp: widget.activePickLabel == null
-                            ? (details) => _handleCanvasTap(
-                                  details.localPosition,
-                                  projectedScene,
-                                )
-                            : null,
-                        child: InteractiveViewer(
-                          transformationController: _transformationController,
-                          boundaryMargin: const EdgeInsets.all(240),
-                          minScale: _minScaleForViewport(constraints.biggest),
-                          maxScale: _maxScale,
-                          onInteractionStart: (_) => _beginInteraction(),
-                          onInteractionEnd: (_) => _scheduleInteractionEnd(),
-                          panEnabled: true,
-                          scaleEnabled: true,
-                          trackpadScrollCausesScale: true,
-                          child: RepaintBoundary(
-                            child: SizedBox(
-                              width: constraints.maxWidth,
-                              height: constraints.maxHeight,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  if (hasTileBase)
-                                    RepaintBoundary(
-                                      child: ClipPath(
-                                        clipper: const _MapDiskClipper(),
-                                        child: _MapTileLayer(
-                                          baseUrl: widget.tileBaseUrl,
-                                          edgeMode: widget.edgeRenderMode,
-                                          tileVersion: _tileCacheVersion,
-                                          viewportSize: constraints.biggest,
-                                          tileZoom: tileZoom,
-                                          tileRange: tileRange,
-                                          showParentFallback:
-                                              !isCompactViewport &&
-                                                  !_isInteracting,
-                                        ),
-                                      ),
-                                    ),
-                                  if (!hasTileBase)
-                                    RepaintBoundary(
-                                      child: CustomPaint(
-                                        isComplex: true,
-                                        willChange: false,
-                                        painter: _BaseMapPainter(
-                                          projectedScene: projectedScene,
-                                          edgeRenderMode: widget.edgeRenderMode,
-                                        ),
-                                      ),
-                                    ),
-                                  RepaintBoundary(
-                                    child: CustomPaint(
-                                      painter: _FlatWorldPainter(
-                                        repaint: Listenable.merge([
-                                          _astronomyAnimationController,
-                                          _astronomyTransitionController,
-                                        ]),
-                                        projectedScene: projectedScene,
-                                        visibleSceneRect: visibleSceneRect,
-                                        selectedShape: _selectedShape,
-                                        selectedAstronomy:
-                                            _selectedAstronomyTarget,
-                                        markerAnchorPoints:
-                                            overlayAnchors.markerPoints,
-                                        labelAnchorPoints:
-                                            overlayAnchors.labelPoints,
-                                        markers: widget.markers,
-                                        labels: widget.labels,
-                                        showGrid: widget.showGrid,
-                                        showTimeZones: widget.showTimeZones,
-                                        useRealTimeZones:
-                                            widget.useRealTimeZones,
-                                        gridStepDegrees: widget.gridStepDegrees,
-                                        edgeRenderMode: widget.edgeRenderMode,
-                                        showLabels: widget.showLabels,
-                                        showShapeLabels: widget.showShapeLabels,
-                                        showStateBoundaries:
-                                            widget.showStateBoundaries,
-                                        previousAstronomySnapshot:
-                                            _previousAstronomySnapshot,
-                                        astronomySnapshot:
-                                            widget.astronomySnapshot,
-                                        skyCatalog: _skyCatalog,
-                                        astronomyTransitionAnimation:
-                                            _astronomyTransitionController,
-                                        showSunPath: widget.showSunPath,
-                                        showMoonPath: widget.showMoonPath,
-                                        showStars: widget.showStars,
-                                        showConstellations:
-                                            widget.showConstellations,
-                                        showConstellationsFullSky:
-                                            widget.showConstellationsFullSky,
-                                        visiblePlanetNames:
-                                            widget.visiblePlanetNames,
-                                        astronomyObserverName:
-                                            widget.astronomyObserverName,
-                                        routePoints: widget.routePoints,
-                                        labelScale: _labelScale,
-                                        viewScale: _viewScale,
-                                        viewRotationRadians: _rotationRadians,
-                                        astronomyPulseAnimation:
-                                            _astronomyAnimationController,
-                                        isInteracting: _isInteracting,
-                                      ),
+                        : null,
+                    child: InteractiveViewer(
+                      transformationController: _transformationController,
+                      boundaryMargin: const EdgeInsets.all(240),
+                      minScale: _minScaleForViewport(constraints.biggest),
+                      maxScale: _maxScale,
+                      onInteractionStart: (_) => _beginInteraction(),
+                      onInteractionEnd: (_) => _scheduleInteractionEnd(),
+                      panEnabled: true,
+                      scaleEnabled: true,
+                      trackpadScrollCausesScale: true,
+                      child: RepaintBoundary(
+                        child: SizedBox(
+                          width: constraints.maxWidth,
+                          height: constraints.maxHeight,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (hasTileBase)
+                                RepaintBoundary(
+                                  child: ClipPath(
+                                    clipper: const _MapDiskClipper(),
+                                    child: _MapTileLayer(
+                                      baseUrl: widget.tileBaseUrl,
+                                      edgeMode: widget.edgeRenderMode,
+                                      tileVersion: _tileCacheVersion,
+                                      viewportSize: constraints.biggest,
+                                      tileZoom: tileZoom,
+                                      tileRange: tileRange,
+                                      showParentFallback:
+                                          !isCompactViewport && !_isInteracting,
                                     ),
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (widget.activePickLabel != null)
-                    Positioned.fill(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onTapUp: (details) {
-                          final selection = _resolveTapLocation(
-                            details.localPosition,
-                            constraints.biggest,
-                          );
-                          if (selection != null) {
-                            widget.onMapPointPicked?.call(selection);
-                          }
-                        },
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: const Color(0x180A2233),
-                            border: Border.all(
-                              color: const Color(0xAAF8F2DE),
-                              width: 1.5,
-                            ),
-                          ),
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: Container(
-                              margin: const EdgeInsets.only(top: 18),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xE6112A46),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                'Click map to set point ${widget.activePickLabel}',
-                                style: const TextStyle(
-                                  color: Color(0xFFF8F3E8),
-                                  fontWeight: FontWeight.w700,
                                 ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  Positioned(
-                    top: isCompactViewport ? 10 : 14,
-                    right: 14,
-                    child: _ZoomControls(
-                      compact: isCompactViewport,
-                      onZoomIn: () => _zoomAtCenter(1.35),
-                      onZoomOut: () => _zoomAtCenter(1 / 1.35),
-                      onRotateLeft: () => _rotateAtCenter(
-                        -math.pi / 12,
-                        constraints.biggest.center(Offset.zero),
-                      ),
-                      onRotateRight: () => _rotateAtCenter(
-                        math.pi / 12,
-                        constraints.biggest.center(Offset.zero),
-                      ),
-                      onReset: _resetView,
-                    ),
-                  ),
-                  if (widget.showGrid && _hoveredGridPoint != null)
-                    Positioned(
-                      left: (_hoveredGridPoint!.anchor.dx + 14)
-                          .clamp(12.0,
-                              math.max(12.0, constraints.maxWidth - 126.0))
-                          .toDouble(),
-                      top: (_hoveredGridPoint!.anchor.dy - 44)
-                          .clamp(12.0,
-                              math.max(12.0, constraints.maxHeight - 56.0))
-                          .toDouble(),
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: const Color(0xE6112A46),
-                            borderRadius: BorderRadius.circular(10),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x26000000),
-                                blurRadius: 12,
-                                offset: Offset(0, 4),
+                              if (!hasTileBase)
+                                RepaintBoundary(
+                                  child: CustomPaint(
+                                    isComplex: true,
+                                    willChange: false,
+                                    painter: _BaseMapPainter(
+                                      projectedScene: projectedScene,
+                                      edgeRenderMode: widget.edgeRenderMode,
+                                    ),
+                                  ),
+                                ),
+                              RepaintBoundary(
+                                child: CustomPaint(
+                                  painter: _FlatWorldPainter(
+                                    repaint: Listenable.merge([
+                                      _astronomyAnimationController,
+                                      _astronomyTransitionController,
+                                    ]),
+                                    projectedScene: projectedScene,
+                                    visibleSceneRect: visibleSceneRect,
+                                    selectedShape: _selectedShape,
+                                    selectedAstronomy: _selectedAstronomyTarget,
+                                    markerAnchorPoints:
+                                        overlayAnchors.markerPoints,
+                                    labelAnchorPoints:
+                                        overlayAnchors.labelPoints,
+                                    markers: widget.markers,
+                                    labels: widget.labels,
+                                    showGrid: widget.showGrid,
+                                    showTimeZones: widget.showTimeZones,
+                                    useRealTimeZones: widget.useRealTimeZones,
+                                    gridStepDegrees: widget.gridStepDegrees,
+                                    edgeRenderMode: widget.edgeRenderMode,
+                                    showLabels: widget.showLabels,
+                                    showShapeLabels: widget.showShapeLabels,
+                                    showStateBoundaries:
+                                        widget.showStateBoundaries,
+                                    previousAstronomySnapshot:
+                                        _previousAstronomySnapshot,
+                                    astronomySnapshot: widget.astronomySnapshot,
+                                    skyCatalog: _skyCatalog,
+                                    astronomyTransitionAnimation:
+                                        _astronomyTransitionController,
+                                    showSunPath: widget.showSunPath,
+                                    showMoonPath: widget.showMoonPath,
+                                    showStars: widget.showStars,
+                                    showConstellations:
+                                        widget.showConstellations,
+                                    showConstellationsFullSky:
+                                        widget.showConstellationsFullSky,
+                                    visiblePlanetNames:
+                                        widget.visiblePlanetNames,
+                                    astronomyObserverName:
+                                        widget.astronomyObserverName,
+                                    routePoints: widget.routePoints,
+                                    labelScale: _labelScale,
+                                    viewScale: _viewScale,
+                                    viewRotationRadians: _rotationRadians,
+                                    astronomyPulseAnimation:
+                                        _astronomyAnimationController,
+                                    isInteracting: _isInteracting,
+                                  ),
+                                ),
                               ),
                             ],
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 7,
-                            ),
-                            child: Text(
-                              '${_formatLatitudeLabel(_hoveredGridPoint!.latitude)}, ${_formatLongitudeLabel(_hoveredGridPoint!.longitude)}',
-                              style: const TextStyle(
-                                color: Color(0xFFF8F3E8),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (widget.activePickLabel != null)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapUp: (details) {
+                      final selection = _resolveTapLocation(
+                        details.localPosition,
+                        constraints.biggest,
+                      );
+                      if (selection != null) {
+                        widget.onMapPointPicked?.call(selection);
+                      }
+                    },
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0x180A2233),
+                        border: Border.all(
+                          color: const Color(0xAAF8F2DE),
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Container(
+                          margin: const EdgeInsets.only(top: 18),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xE6112A46),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Click map to set point ${widget.activePickLabel}',
+                            style: const TextStyle(
+                              color: Color(0xFFF8F3E8),
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
                       ),
                     ),
-                ],
-              );
-            },
-          ),
-        ),
+                  ),
+                ),
+              Positioned(
+                top: isCompactViewport ? 10 : 14,
+                right: 14,
+                child: _ZoomControls(
+                  compact: isCompactViewport,
+                  onZoomIn: () => _zoomAtCenter(1.35),
+                  onZoomOut: () => _zoomAtCenter(1 / 1.35),
+                  onRotateLeft: () => _rotateAtCenter(
+                    -math.pi / 12,
+                    constraints.biggest.center(Offset.zero),
+                  ),
+                  onRotateRight: () => _rotateAtCenter(
+                    math.pi / 12,
+                    constraints.biggest.center(Offset.zero),
+                  ),
+                  onReset: _resetView,
+                ),
+              ),
+              if (widget.showGrid && _hoveredGridPoint != null)
+                Positioned(
+                  left: (_hoveredGridPoint!.anchor.dx + 14)
+                      .clamp(12.0, math.max(12.0, constraints.maxWidth - 126.0))
+                      .toDouble(),
+                  top: (_hoveredGridPoint!.anchor.dy - 44)
+                      .clamp(12.0, math.max(12.0, constraints.maxHeight - 56.0))
+                      .toDouble(),
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xE6112A46),
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x26000000),
+                            blurRadius: 12,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        child: Text(
+                          '${_formatLatitudeLabel(_hoveredGridPoint!.latitude)}, ${_formatLongitudeLabel(_hoveredGridPoint!.longitude)}',
+                          style: const TextStyle(
+                            color: Color(0xFFF8F3E8),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1677,11 +1641,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
     if (viewportSize == null) {
       return 1;
     }
-    return viewportSize.width < 560 ? 0.82 : 1;
+    return viewportSize.width < 560 ? 0.82 : 0.96;
   }
 
   double _defaultScaleForViewport(Size viewportSize) {
-    return viewportSize.width < 560 ? 0.88 : 1;
+    return viewportSize.width < 560 ? 0.88 : 0.97;
   }
 
   void _applyDefaultView(Size viewportSize) {
@@ -3611,8 +3575,7 @@ class _FlatWorldPainter extends CustomPainter {
             136,
             255,
           )
-          ..strokeWidth =
-              _screenStableRadius(1.45, viewScale, minRadius: 0.58);
+          ..strokeWidth = _screenStableRadius(1.45, viewScale, minRadius: 0.58);
 
         final startPoint = _projectSkyCoordinate(
           center,
@@ -3730,7 +3693,8 @@ class _FlatWorldPainter extends CustomPainter {
       return;
     }
 
-    final matches = catalog.constellations.where((entry) => entry.id == selection.id);
+    final matches =
+        catalog.constellations.where((entry) => entry.id == selection.id);
     if (matches.isEmpty) {
       return;
     }
@@ -3821,7 +3785,8 @@ class _FlatWorldPainter extends CustomPainter {
         siderealDegrees: snapshot.greenwichSiderealDegrees,
       );
     } else {
-      final matches = catalog.constellations.where((entry) => entry.id == selection.id);
+      final matches =
+          catalog.constellations.where((entry) => entry.id == selection.id);
       if (matches.isEmpty) {
         return;
       }
@@ -3852,7 +3817,7 @@ class _FlatWorldPainter extends CustomPainter {
             ),
             textDirection: TextDirection.ltr,
           )..layout(maxWidth: 80));
-    final labelCenter = anchorPoint! +
+    final labelCenter = anchorPoint +
         _screenOffsetToScene(
           selection.kind == _AstronomySelectionKind.constellation
               ? const Offset(30, -6)

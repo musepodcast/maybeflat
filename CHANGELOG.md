@@ -4,6 +4,15 @@ All notable changes to this project should be recorded in this file.
 
 The format is intentionally simple and release-focused.
 
+## [1.6.1] - 2026-04-13
+
+Astronomy and mobile connectivity patch.
+
+- Fixed Android cleartext networking so local LAN backend testing can work on physical devices
+- Added clearer Android offline guidance for local backend development
+- Fixed the desktop and reset-view map fit so the outer `90SW` label no longer clips on load
+- Refined the outer ocean presentation so the map card uses page real estate more cleanly without distorting the world projection
+
 ## [1.6.0] - 2026-04-12
 
 Astronomy sky overlay release.

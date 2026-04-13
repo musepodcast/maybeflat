@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/astronomy_event.dart';
@@ -293,7 +294,7 @@ class _HomeScreenState extends State<HomeScreen> {
               isHealthy ? _BackendStatus.degraded : _BackendStatus.offline;
           _error = isHealthy
               ? 'Backend responded, but the scene payload could not be loaded.'
-              : 'Backend is offline. Start the FastAPI server to load live map data.';
+              : _backendOfflineMessage();
           _detailLevel = requestedDetail;
           _shapeSource = 'unavailable';
           _usingRealCoastlines = false;
@@ -321,6 +322,14 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  String _backendOfflineMessage() {
+    final androidHint = !kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.android
+        ? ' On a physical Android device, run "adb reverse tcp:8002 tcp:8002" or launch with MAYBEFLAT_API_BASE_URL pointed at your LAN backend URL.'
+        : '';
+    return 'Backend is offline. Start the FastAPI server to load live map data.$androidHint';
   }
 
   void _trackEvent(
@@ -380,8 +389,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _sceneCache.clear();
         setState(() {
           _backendStatus = _BackendStatus.offline;
-          _error =
-              'Backend is offline. Start the FastAPI server to load live map data.';
+          _error = _backendOfflineMessage();
           _detailLevel = _currentSceneDetail();
           _shapeSource = 'unavailable';
           _usingRealCoastlines = false;
@@ -2021,6 +2029,22 @@ class _HomeScreenState extends State<HomeScreen> {
           clipBehavior: Clip.antiAlias,
           child: Stack(
             children: [
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0xFFDCECEF),
+                        Color(0xFFA8D1D3),
+                        Color(0xFF6FA9B4),
+                      ],
+                      stops: [0.0, 0.42, 1.0],
+                    ),
+                  ),
+                ),
+              ),
               Positioned.fill(
                 child: Padding(
                   padding: EdgeInsets.all(mapPadding),
@@ -2866,12 +2890,12 @@ class _IntroPanel extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: astronomyTimeMode ==
-                                      _AstronomyTimeMode.custom &&
-                                  (isAstronomyPlaying ||
-                                      astronomyPlaybackProgress > 0)
-                              ? onAstronomyPlaybackStop
-                              : null,
+                          onPressed:
+                              astronomyTimeMode == _AstronomyTimeMode.custom &&
+                                      (isAstronomyPlaying ||
+                                          astronomyPlaybackProgress > 0)
+                                  ? onAstronomyPlaybackStop
+                                  : null,
                           child: const Text('Restart'),
                         ),
                       ),
