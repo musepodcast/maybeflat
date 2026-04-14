@@ -11,6 +11,7 @@ import '../models/map_label.dart';
 import '../models/measure_result.dart';
 import '../models/map_scene.dart';
 import '../models/place_marker.dart';
+import '../models/wind_snapshot.dart';
 import 'client_identity.dart';
 
 class MaybeflatApi {
@@ -347,6 +348,38 @@ class MaybeflatApi {
     return (payload['events'] as List<dynamic>? ?? const [])
         .map((event) => AstronomyEvent.fromJson(event as Map<String, dynamic>))
         .toList(growable: false);
+  }
+
+  Future<WindSnapshot> loadWindSnapshot({
+    DateTime? timestampUtc,
+    String level = 'surface',
+    int gridStepDegrees = 15,
+  }) async {
+    final queryParameters = <String, String>{
+      'level': level,
+      'grid_step_degrees': '$gridStepDegrees',
+    };
+    if (timestampUtc != null) {
+      queryParameters['timestamp_utc'] = timestampUtc.toUtc().toIso8601String();
+    }
+
+    final uri = await _buildUri(
+      '/map/weather/wind',
+      queryParameters: queryParameters,
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load wind snapshot: ${response.statusCode}');
+    }
+
+    return WindSnapshot.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<CitySearchResult>> searchCities({

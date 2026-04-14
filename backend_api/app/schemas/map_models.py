@@ -139,6 +139,24 @@ class AstronomyEventListResponse(BaseModel):
     events: list[AstronomyEventResponse]
 
 
+class WindVectorResponse(BaseModel):
+    latitude: float
+    longitude: float
+    u_mps: float
+    v_mps: float
+    speed_mps: float
+
+
+class WindSnapshotResponse(BaseModel):
+    timestamp_utc: str
+    source: str
+    level: str
+    grid_step_degrees: int
+    min_speed_mps: float
+    max_speed_mps: float
+    vectors: list[WindVectorResponse]
+
+
 class CitySearchResultResponse(BaseModel):
     geoname_id: int
     name: str

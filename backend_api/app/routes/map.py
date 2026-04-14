@@ -12,6 +12,7 @@ from app.schemas.map_models import (
     MeasureResponse,
     TileManifestResponse,
     TransformRequest,
+    WindSnapshotResponse,
 )
 from app.data.city_search import search_city_entries
 from app.services.astronomy import get_astronomy_snapshot, list_astronomy_events
@@ -23,6 +24,7 @@ from app.services.flat_world import (
     transform_point,
 )
 from app.services.tile_renderer import build_tile_manifest, render_tile_png
+from app.services.weather_wind import get_wind_snapshot
 
 
 router = APIRouter(prefix="/map", tags=["map"])
@@ -87,6 +89,25 @@ def get_events(
         from_timestamp_utc=from_timestamp_utc,
         limit=limit,
     )
+
+
+@router.get("/weather/wind", response_model=WindSnapshotResponse)
+def get_weather_wind(
+    timestamp_utc: str | None = Query(default=None),
+    level: str = Query(
+        default="surface",
+        pattern="^(surface|1000|850|700|500|250|70|10)$",
+    ),
+    grid_step_degrees: int = Query(default=15, ge=5, le=30),
+) -> WindSnapshotResponse:
+    try:
+        return get_wind_snapshot(
+            timestamp_utc=timestamp_utc,
+            level=level,
+            grid_step_degrees=grid_step_degrees,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/cities/search", response_model=CitySearchResponse)

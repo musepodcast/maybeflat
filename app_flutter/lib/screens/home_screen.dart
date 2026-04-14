@@ -12,6 +12,7 @@ import '../models/map_scene.dart';
 import '../models/map_shape.dart';
 import '../models/measure_result.dart';
 import '../models/place_marker.dart';
+import '../models/wind_snapshot.dart';
 import '../services/maybeflat_api.dart';
 import '../widgets/flat_world_canvas.dart';
 
@@ -47,6 +48,49 @@ const double _stateBoundaryZoomThreshold = 3.6;
 const double _cityDetailZoomThreshold = 5.6;
 const Duration _astronomyPlaybackTick = Duration(milliseconds: 200);
 const Duration _cityLabelRefreshDebounce = Duration(milliseconds: 220);
+const List<String> _windLevelOptions = <String>[
+  'surface',
+  '1000',
+  '850',
+  '700',
+  '500',
+  '250',
+  '70',
+  '10',
+];
+const Map<String, ({double km, double miles})> _windLevelAltitudeByKey =
+    <String, ({double km, double miles})>{
+  'surface': (km: 0.0, miles: 0.0),
+  '1000': (km: 0.11, miles: 0.07),
+  '850': (km: 1.46, miles: 0.91),
+  '700': (km: 3.01, miles: 1.87),
+  '500': (km: 5.57, miles: 3.46),
+  '250': (km: 10.36, miles: 6.44),
+  '70': (km: 18.71, miles: 11.63),
+  '10': (km: 31.06, miles: 19.30),
+};
+
+String _playbackPresetLabel(_AstronomyPlaybackPreset preset) {
+  return switch (preset) {
+    _AstronomyPlaybackPreset.oneDay => '1 day',
+    _AstronomyPlaybackPreset.sevenDays => '7 days',
+    _AstronomyPlaybackPreset.twentyEightDays => '28 days',
+    _AstronomyPlaybackPreset.threeSixtyFiveDays => '365 days',
+    _AstronomyPlaybackPreset.fiveYears => '5 years',
+    _AstronomyPlaybackPreset.tenYears => '10 years',
+    _AstronomyPlaybackPreset.custom => 'Custom',
+  };
+}
+
+String _playbackSpeedLabel(_AstronomyPlaybackSpeed speed) {
+  return switch (speed) {
+    _AstronomyPlaybackSpeed.slow => 'Slow',
+    _AstronomyPlaybackSpeed.normal => 'Normal',
+    _AstronomyPlaybackSpeed.fast => 'Fast',
+    _AstronomyPlaybackSpeed.veryFast => 'Very fast',
+  };
+}
+
 const List<int> _astronomyTimeZoneOffsetMinutes = [
   -720,
   -660,
@@ -145,6 +189,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showStars = false;
   bool _showConstellations = false;
   bool _showConstellationsFullSky = false;
+  bool _showWind = false;
+  String _windLevel = 'surface';
   final Map<String, bool> _planetVisibility = <String, bool>{
     for (final planetName in _astronomyPlanetNames) planetName: false,
   };
@@ -157,6 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _measureError;
   String? _astronomyError;
   String? _astronomyEventError;
+  String? _windError;
   _BackendStatus _backendStatus = _BackendStatus.checking;
   _DistanceUnitDisplay _distanceUnitDisplay = _DistanceUnitDisplay.both;
   int _stopCount = 2;
@@ -178,6 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MapLabel> _labels = const [];
   Rect? _visibleMapBounds;
   AstronomySnapshot? _astronomySnapshot;
+  WindSnapshot? _windSnapshot;
   List<AstronomyEvent> _astronomyEvents = const [];
   _AstronomyEventFilter _astronomyEventFilter = _AstronomyEventFilter.all;
   String _astronomyEclipseSubtype = 'all';
@@ -191,6 +239,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _AstronomyPlaybackPreset.oneDay;
   _AstronomyPlaybackSpeed _astronomyPlaybackSpeed =
       _AstronomyPlaybackSpeed.normal;
+  bool _isLoadingWind = false;
+  int _windRequestSequence = 0;
   List<PlaceMarker?> _routePoints = List<PlaceMarker?>.filled(
     _maxRouteStops,
     null,
@@ -507,8 +557,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _labels = _mergeLabels(scene.labels, _dynamicCityLabels);
     });
     _scheduleDynamicCityLabelRefresh();
-    if (_shouldShowAstronomy && !_isLoadingAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays && !_isLoadingAstronomy && !_isLoadingWind) {
+      _refreshTimedOverlays();
     }
     if (_astronomyEvents.isEmpty && !_isLoadingAstronomyEvents) {
       _loadAstronomyEvents();
@@ -726,6 +776,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _showConstellations ||
       _showAnyPlanets;
 
+  bool get _shouldShowTimedOverlays => _shouldShowAstronomy || _showWind;
+
   Map<String, dynamic> _astronomyVisibilityProperties() {
     final visiblePlanets = _visiblePlanetNames;
     return <String, dynamic>{
@@ -740,7 +792,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _finalizeAstronomyVisibilityChange(bool wasShowingAstronomy) {
-    if (!_shouldShowAstronomy) {
+    final wasShowingTimedOverlays = wasShowingAstronomy || _showWind;
+    if (!_shouldShowTimedOverlays) {
       _stopAstronomyPlayback();
     }
     if (!wasShowingAstronomy && _shouldShowAstronomy) {
@@ -750,8 +803,18 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays &&
+        wasShowingTimedOverlays != _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _showWind,
+        },
+      );
+    }
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
     }
   }
 
@@ -812,13 +875,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _syncAstronomyTimer() {
     _astronomyTimer?.cancel();
-    if (!_shouldShowAstronomy ||
+    if (!_shouldShowTimedOverlays ||
         _astronomyTimeMode != _AstronomyTimeMode.current) {
       return;
     }
     _astronomyTimer = Timer.periodic(
       const Duration(minutes: 1),
-      (_) => _loadAstronomy(),
+      (_) => _refreshTimedOverlays(),
     );
   }
 
@@ -882,8 +945,8 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _stopAstronomyPlayback();
     _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
     }
   }
 
@@ -946,8 +1009,8 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     _stopAstronomyPlayback();
     _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      await _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      await _refreshTimedOverlays();
     }
   }
 
@@ -959,8 +1022,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _astronomyCustomTime = _astronomyPlaybackCurrentTime();
     });
     _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      await _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      await _refreshTimedOverlays();
     }
   }
 
@@ -969,10 +1032,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _stopAstronomyPlayback();
       return;
     }
-    if (_backendStatus == _BackendStatus.offline || !_shouldShowAstronomy) {
+    if (_backendStatus == _BackendStatus.offline || !_shouldShowTimedOverlays) {
       setState(() {
         _astronomyError =
-            'Enable the sun or moon overlay and keep the backend online to use playback.';
+            'Enable a timed overlay like astronomy or wind and keep the backend online to use playback.';
       });
       return;
     }
@@ -992,7 +1055,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _astronomyPlaybackTimer = Timer.periodic(
       _astronomyPlaybackTick,
       (_) async {
-        if (!mounted || _isLoadingAstronomy) {
+        if (!mounted || _isLoadingAstronomy || _isLoadingWind) {
           return;
         }
         final startUtc = _astronomyPlaybackStart.toUtc();
@@ -1018,12 +1081,39 @@ class _HomeScreenState extends State<HomeScreen> {
           _astronomyPlaybackProgress = nextProgress;
           _astronomyCustomTime = clampedNextTimeUtc.toLocal();
         });
-        await _loadAstronomy(quiet: true);
+        await _refreshTimedOverlays(quiet: true);
         if (!mounted || _astronomyPlaybackProgress >= 1) {
           _stopAstronomyPlayback();
         }
       },
     );
+  }
+
+  Future<void> _refreshTimedOverlays({
+    bool quiet = false,
+    DateTime? timestampUtcOverride,
+  }) async {
+    final tasks = <Future<void>>[];
+    if (_shouldShowAstronomy) {
+      tasks.add(
+        _loadAstronomy(
+          quiet: quiet,
+          timestampUtcOverride: timestampUtcOverride,
+        ),
+      );
+    }
+    if (_showWind) {
+      tasks.add(
+        _loadWind(
+          quiet: quiet,
+          timestampUtcOverride: timestampUtcOverride,
+        ),
+      );
+    }
+    if (tasks.isEmpty) {
+      return;
+    }
+    await Future.wait(tasks);
   }
 
   Future<void> _loadAstronomyEvents() async {
@@ -1162,6 +1252,75 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _loadWind({
+    bool quiet = false,
+    DateTime? timestampUtcOverride,
+  }) async {
+    if (!_showWind) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _windSnapshot = null;
+        _windError = null;
+        _isLoadingWind = false;
+      });
+      return;
+    }
+    if (_backendStatus == _BackendStatus.offline) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _windError = 'Backend must be online to load the wind overlay.';
+      });
+      return;
+    }
+
+    final requestSequence = ++_windRequestSequence;
+    final effectiveTimestampUtc =
+        (timestampUtcOverride ?? _astronomyTimestampUtc()).toUtc();
+
+    if (!quiet && mounted) {
+      setState(() {
+        _isLoadingWind = true;
+        _windError = null;
+      });
+    }
+
+    try {
+      final snapshot = await _api.loadWindSnapshot(
+        timestampUtc: effectiveTimestampUtc,
+        level: _windLevel,
+      );
+      if (!mounted || requestSequence != _windRequestSequence) {
+        return;
+      }
+      setState(() {
+        _windSnapshot = snapshot;
+        _windError = null;
+      });
+    } catch (_) {
+      if (!mounted || requestSequence != _windRequestSequence) {
+        return;
+      }
+      setState(() {
+        _windError = 'Could not load the wind overlay from the backend.';
+      });
+      if (_isAstronomyPlaying) {
+        _stopAstronomyPlayback();
+      }
+    } finally {
+      if (!quiet && mounted) {
+        if (requestSequence == _windRequestSequence) {
+          setState(() {
+            _isLoadingWind = false;
+          });
+        }
+      }
+    }
+  }
+
   void _setAstronomyToggle({
     bool? showSunPath,
     bool? showMoonPath,
@@ -1192,6 +1351,61 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     _finalizeAstronomyVisibilityChange(wasShowingAstronomy);
+  }
+
+  void _setWindVisible(bool isVisible) {
+    if (_showWind == isVisible) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _showWind = isVisible;
+      if (!_showWind) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _showWind,
+        },
+      );
+    }
+    _trackEvent(
+      'wind_overlay_toggle',
+      properties: <String, dynamic>{
+        'enabled': isVisible,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setWindLevel(String? level) {
+    if (level == null || _windLevel == level) {
+      return;
+    }
+
+    setState(() {
+      _windLevel = level;
+    });
+    _trackEvent(
+      'wind_level_changed',
+      properties: <String, dynamic>{
+        'level': level,
+      },
+    );
+    if (_showWind) {
+      _loadWind();
+    }
   }
 
   void _setPlanetVisibility(String planetName, bool isVisible) {
@@ -1260,8 +1474,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
     _syncAstronomyTimer();
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
     }
   }
 
@@ -1299,8 +1513,8 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     _stopAstronomyPlayback();
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
     }
   }
 
@@ -1346,8 +1560,8 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
     }
-    if (_shouldShowAstronomy) {
-      _loadAstronomy();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
     }
   }
 
@@ -1365,6 +1579,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _astronomyTimeZoneValueForOffset(int offsetMinutes) {
     return 'offset:$offsetMinutes';
+  }
+
+  String _windAltitudeExplanation(String level) {
+    final altitude = _windLevelAltitudeByKey[level];
+    if (altitude == null) {
+      return 'Approx altitude unavailable.';
+    }
+    return 'Approx altitude: ${altitude.km.toStringAsFixed(2)} km / ${altitude.miles.toStringAsFixed(2)} mi above sea level.';
   }
 
   int? _selectedAstronomyOffsetMinutes() {
@@ -1546,7 +1768,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'subtype': event.subtype,
       },
     );
-    await _loadAstronomy(timestampUtcOverride: event.timestampUtc);
+    await _refreshTimedOverlays(timestampUtcOverride: event.timestampUtc);
   }
 
   Future<void> _stepAstronomyEvent(int delta) async {
@@ -1815,7 +2037,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final hudInset = isCompactScreen ? 10.0 : 20.0;
         final overlayNotice = _pickStopIndex != null
             ? 'Tap the map to place stop ${_pickStopIndex! + 1}.'
-            : _error ?? _measureError ?? _astronomyError;
+            : _error ?? _measureError ?? _astronomyError ?? _windError;
         final overlayNoticeIsWarning =
             _pickStopIndex == null && overlayNotice != null;
         final showBottomNotice = !isCompactScreen || overlayNotice != null;
@@ -1834,6 +2056,8 @@ class _HomeScreenState extends State<HomeScreen> {
           showStars: _showStars,
           showConstellations: _showConstellations,
           showConstellationsFullSky: _showConstellationsFullSky,
+          showWind: _showWind,
+          windLevel: _windLevel,
           allPlanetsVisible: _allPlanetsVisible,
           planetVisibility: _planetVisibility,
           astronomyTimeMode: _astronomyTimeMode,
@@ -1841,10 +2065,12 @@ class _HomeScreenState extends State<HomeScreen> {
           astronomyDisplayTimeZoneOptions: _astronomyDisplayTimeZoneOptions,
           isLoading: _isLoading,
           isLoadingAstronomy: _isLoadingAstronomy,
+          isLoadingWind: _isLoadingWind,
           isMeasuring: _isMeasuring,
           error: _error,
           measureError: _measureError,
           astronomyError: _astronomyError,
+          windError: _windError,
           backendStatus: _backendStatus,
           detailLevel: _detailLevel,
           shapeSource: _shapeSource,
@@ -1856,6 +2082,10 @@ class _HomeScreenState extends State<HomeScreen> {
           timezoneSource: _timezoneSource,
           usingRealTimezones: _usingRealTimezones,
           astronomySnapshot: _astronomySnapshot,
+          windSnapshot: _windSnapshot,
+          windAltitudeExplanation: _windAltitudeExplanation(
+            _windSnapshot?.level ?? _windLevel,
+          ),
           astronomyEvents: _filteredAstronomyEvents,
           selectedAstronomyEvent: _selectedAstronomyEvent,
           astronomyEventFilter: _astronomyEventFilter,
@@ -1869,6 +2099,9 @@ class _HomeScreenState extends State<HomeScreen> {
           astronomyCustomTimeLabel: _formatAstronomyTimeLabel(
             _astronomyCustomTime.toUtc(),
           ),
+          windSnapshotTimeLabel: _windSnapshot == null
+              ? null
+              : _formatAstronomyTimeLabel(_windSnapshot!.timestampUtc),
           astronomyPlaybackStartLabel: _formatAstronomyTimeLabel(
             _astronomyPlaybackStart.toUtc(),
           ),
@@ -1948,6 +2181,8 @@ class _HomeScreenState extends State<HomeScreen> {
           onShowConstellationsFullSkyChanged: (value) => _setAstronomyToggle(
             showConstellationsFullSky: value,
           ),
+          onShowWindChanged: _setWindVisible,
+          onWindLevelChanged: _setWindLevel,
           onShowAllPlanetsChanged: _setAllPlanetsVisibility,
           onShowPlanetChanged: _setPlanetVisibility,
           onAstronomyTimeModeChanged: (value) {
@@ -2074,6 +2309,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         showStars: _showStars,
                         showConstellations: _showConstellations,
                         showConstellationsFullSky: _showConstellationsFullSky,
+                        windSnapshot: _windSnapshot,
+                        showWind: _showWind,
+                        animateWind: _isAstronomyPlaying,
                         visiblePlanetNames: _visiblePlanetNames,
                         astronomyObserverName: _astronomyObserver?.displayName,
                         routePoints: _activeRoutePoints,
@@ -2306,6 +2544,8 @@ class _IntroPanel extends StatelessWidget {
     required this.showStars,
     required this.showConstellations,
     required this.showConstellationsFullSky,
+    required this.showWind,
+    required this.windLevel,
     required this.allPlanetsVisible,
     required this.planetVisibility,
     required this.astronomyTimeMode,
@@ -2313,10 +2553,12 @@ class _IntroPanel extends StatelessWidget {
     required this.astronomyDisplayTimeZoneOptions,
     required this.isLoading,
     required this.isLoadingAstronomy,
+    required this.isLoadingWind,
     required this.isMeasuring,
     required this.error,
     required this.measureError,
     required this.astronomyError,
+    required this.windError,
     required this.backendStatus,
     required this.detailLevel,
     required this.shapeSource,
@@ -2328,6 +2570,8 @@ class _IntroPanel extends StatelessWidget {
     required this.timezoneSource,
     required this.usingRealTimezones,
     required this.astronomySnapshot,
+    required this.windSnapshot,
+    required this.windAltitudeExplanation,
     required this.astronomyEvents,
     required this.selectedAstronomyEvent,
     required this.astronomyEventFilter,
@@ -2339,6 +2583,7 @@ class _IntroPanel extends StatelessWidget {
     required this.astronomyEventScrollController,
     required this.astronomyObserverName,
     required this.astronomyCustomTimeLabel,
+    required this.windSnapshotTimeLabel,
     required this.astronomyPlaybackStartLabel,
     required this.astronomyPlaybackEndLabel,
     required this.astronomyPlaybackCurrentLabel,
@@ -2369,6 +2614,8 @@ class _IntroPanel extends StatelessWidget {
     required this.onShowStarsChanged,
     required this.onShowConstellationsChanged,
     required this.onShowConstellationsFullSkyChanged,
+    required this.onShowWindChanged,
+    required this.onWindLevelChanged,
     required this.onShowAllPlanetsChanged,
     required this.onShowPlanetChanged,
     required this.onAstronomyTimeModeChanged,
@@ -2410,6 +2657,8 @@ class _IntroPanel extends StatelessWidget {
   final bool showStars;
   final bool showConstellations;
   final bool showConstellationsFullSky;
+  final bool showWind;
+  final String windLevel;
   final bool allPlanetsVisible;
   final Map<String, bool> planetVisibility;
   final _AstronomyTimeMode astronomyTimeMode;
@@ -2417,10 +2666,12 @@ class _IntroPanel extends StatelessWidget {
   final List<_ChoiceItem<String>> astronomyDisplayTimeZoneOptions;
   final bool isLoading;
   final bool isLoadingAstronomy;
+  final bool isLoadingWind;
   final bool isMeasuring;
   final String? error;
   final String? measureError;
   final String? astronomyError;
+  final String? windError;
   final _BackendStatus backendStatus;
   final String detailLevel;
   final String shapeSource;
@@ -2432,6 +2683,8 @@ class _IntroPanel extends StatelessWidget {
   final String timezoneSource;
   final bool usingRealTimezones;
   final AstronomySnapshot? astronomySnapshot;
+  final WindSnapshot? windSnapshot;
+  final String windAltitudeExplanation;
   final List<AstronomyEvent> astronomyEvents;
   final AstronomyEvent? selectedAstronomyEvent;
   final _AstronomyEventFilter astronomyEventFilter;
@@ -2443,6 +2696,7 @@ class _IntroPanel extends StatelessWidget {
   final ScrollController astronomyEventScrollController;
   final String? astronomyObserverName;
   final String astronomyCustomTimeLabel;
+  final String? windSnapshotTimeLabel;
   final String astronomyPlaybackStartLabel;
   final String astronomyPlaybackEndLabel;
   final String astronomyPlaybackCurrentLabel;
@@ -2473,6 +2727,8 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowStarsChanged;
   final ValueChanged<bool> onShowConstellationsChanged;
   final ValueChanged<bool> onShowConstellationsFullSkyChanged;
+  final ValueChanged<bool> onShowWindChanged;
+  final ValueChanged<String?> onWindLevelChanged;
   final ValueChanged<bool> onShowAllPlanetsChanged;
   final void Function(String planetName, bool isVisible) onShowPlanetChanged;
   final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
@@ -2648,8 +2904,164 @@ class _IntroPanel extends StatelessWidget {
               const Divider(),
               const SizedBox(height: 18),
               _CollapsiblePanel(
+                title: 'Weather Overlay',
+                subtitle: 'Preview surface wind field with shared map time',
+                initiallyExpanded: false,
+                children: [
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: showWind,
+                    title: const Text('Wind overlay'),
+                    subtitle: const Text(
+                      'Shows a color-scaled global wind field that follows the shared map time.',
+                    ),
+                    onChanged: onShowWindChanged,
+                  ),
+                  _SelectionField(
+                    labelText: 'Wind level',
+                    valueText:
+                        windLevel == 'surface' ? 'Surface' : '$windLevel hPa',
+                    currentValue: windLevel,
+                    enabled: showWind,
+                    onChanged: onWindLevelChanged,
+                    options: [
+                      for (final level in _windLevelOptions)
+                        _ChoiceItem(
+                          value: level,
+                          label: level == 'surface' ? 'Surface' : '$level hPa',
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This first pass uses a backend preview wind field so the full UI and playback flow are in place before NOAA/GFS ingest is added.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF335C67),
+                      height: 1.35,
+                    ),
+                  ),
+                  if (isLoadingWind) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Loading wind overlay...',
+                      style: TextStyle(
+                        color: Color(0xFF335C67),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (windError != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      windError!,
+                      style: const TextStyle(
+                        color: Color(0xFF7A4A17),
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                  if (windSnapshot != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE7EFF5),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Snapshot: ${windSnapshotTimeLabel ?? windSnapshot!.timestampUtc.toIso8601String()}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF112A46),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Layer: ${windSnapshot!.level == 'surface' ? 'Surface' : '${windSnapshot!.level} hPa'} wind, every ${windSnapshot!.gridStepDegrees} degrees.',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Speed range: ${windSnapshot!.minSpeedMps.toStringAsFixed(1)} to ${windSnapshot!.maxSpeedMps.toStringAsFixed(1)} m/s.',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            windAltitudeExplanation,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Source: ${windSnapshot!.source}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF335C67),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  _SharedTimePlaybackSection(
+                    title: 'Shared Map Time',
+                    enabled: showWind,
+                    astronomyTimeMode: astronomyTimeMode,
+                    astronomyDisplayTimeZone: astronomyDisplayTimeZone,
+                    astronomyDisplayTimeZoneOptions:
+                        astronomyDisplayTimeZoneOptions,
+                    astronomyCustomTimeLabel: astronomyCustomTimeLabel,
+                    astronomyPlaybackStartLabel: astronomyPlaybackStartLabel,
+                    astronomyPlaybackEndLabel: astronomyPlaybackEndLabel,
+                    astronomyPlaybackCurrentLabel:
+                        astronomyPlaybackCurrentLabel,
+                    astronomyPlaybackProgress: astronomyPlaybackProgress,
+                    astronomyPlaybackPreset: astronomyPlaybackPreset,
+                    astronomyPlaybackSpeed: astronomyPlaybackSpeed,
+                    isAstronomyPlaying: isAstronomyPlaying,
+                    onAstronomyTimeModeChanged: onAstronomyTimeModeChanged,
+                    onAstronomyDisplayTimeZoneChanged:
+                        onAstronomyDisplayTimeZoneChanged,
+                    onAstronomyDateTimePressed: onAstronomyDateTimePressed,
+                    onAstronomyPlaybackPresetChanged:
+                        onAstronomyPlaybackPresetChanged,
+                    onAstronomyPlaybackSpeedChanged:
+                        onAstronomyPlaybackSpeedChanged,
+                    onAstronomyPlaybackStartPressed:
+                        onAstronomyPlaybackStartPressed,
+                    onAstronomyPlaybackEndPressed:
+                        onAstronomyPlaybackEndPressed,
+                    onAstronomyPlaybackProgressChanged:
+                        onAstronomyPlaybackProgressChanged,
+                    onAstronomyPlaybackToggle: onAstronomyPlaybackToggle,
+                    onAstronomyPlaybackStop: onAstronomyPlaybackStop,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _CollapsiblePanel(
                 title: 'Astronomy Overlay',
-                subtitle: 'Sun, moon, planets, observer, and event controls',
+                subtitle:
+                    'Sun, moon, planets, observer, shared time, and events',
                 initiallyExpanded: false,
                 children: [
                   SwitchListTile(
@@ -2721,183 +3133,67 @@ class _IntroPanel extends StatelessWidget {
                       onChanged: (value) =>
                           onShowPlanetChanged(planetName, value),
                     ),
-                  _SelectionField(
-                    labelText: 'Astronomy time',
-                    valueText: astronomyTimeMode == _AstronomyTimeMode.current
-                        ? 'Current time'
-                        : 'Custom time',
-                    currentValue: astronomyTimeMode,
-                    onChanged: onAstronomyTimeModeChanged,
-                    options: const [
-                      _ChoiceItem(
-                        value: _AstronomyTimeMode.current,
-                        label: 'Current time',
+                  _SharedTimePlaybackSection(
+                    enabled: true,
+                    astronomyTimeMode: astronomyTimeMode,
+                    astronomyDisplayTimeZone: astronomyDisplayTimeZone,
+                    astronomyDisplayTimeZoneOptions:
+                        astronomyDisplayTimeZoneOptions,
+                    astronomyCustomTimeLabel: astronomyCustomTimeLabel,
+                    astronomyPlaybackStartLabel: astronomyPlaybackStartLabel,
+                    astronomyPlaybackEndLabel: astronomyPlaybackEndLabel,
+                    astronomyPlaybackCurrentLabel:
+                        astronomyPlaybackCurrentLabel,
+                    astronomyPlaybackProgress: astronomyPlaybackProgress,
+                    astronomyPlaybackPreset: astronomyPlaybackPreset,
+                    astronomyPlaybackSpeed: astronomyPlaybackSpeed,
+                    isAstronomyPlaying: isAstronomyPlaying,
+                    onAstronomyTimeModeChanged: onAstronomyTimeModeChanged,
+                    onAstronomyDisplayTimeZoneChanged:
+                        onAstronomyDisplayTimeZoneChanged,
+                    onAstronomyDateTimePressed: onAstronomyDateTimePressed,
+                    onAstronomyPlaybackPresetChanged:
+                        onAstronomyPlaybackPresetChanged,
+                    onAstronomyPlaybackSpeedChanged:
+                        onAstronomyPlaybackSpeedChanged,
+                    onAstronomyPlaybackStartPressed:
+                        onAstronomyPlaybackStartPressed,
+                    onAstronomyPlaybackEndPressed:
+                        onAstronomyPlaybackEndPressed,
+                    onAstronomyPlaybackProgressChanged:
+                        onAstronomyPlaybackProgressChanged,
+                    onAstronomyPlaybackToggle: onAstronomyPlaybackToggle,
+                    onAstronomyPlaybackStop: onAstronomyPlaybackStop,
+                    middleChildren: [
+                      _CitySearchField(
+                        label: 'Observer city',
+                        controller: astronomyObserverController,
+                        onSelected: onAstronomyObserverSelected,
+                        searchCities: onSearchCities,
                       ),
-                      _ChoiceItem(
-                        value: _AstronomyTimeMode.custom,
-                        label: 'Custom time',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _SelectionField(
-                    labelText: 'Display time zone',
-                    valueText: astronomyDisplayTimeZoneOptions
-                        .firstWhere(
-                          (option) => option.value == astronomyDisplayTimeZone,
-                          orElse: () => astronomyDisplayTimeZoneOptions.first,
-                        )
-                        .label,
-                    helperText:
-                        'Default is local time. Fixed UTC offsets are display-only.',
-                    currentValue: astronomyDisplayTimeZone,
-                    onChanged: onAstronomyDisplayTimeZoneChanged,
-                    options: astronomyDisplayTimeZoneOptions,
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton(
-                    onPressed: astronomyTimeMode == _AstronomyTimeMode.custom
-                        ? onAstronomyDateTimePressed
-                        : null,
-                    child: Text(
-                      astronomyTimeMode == _AstronomyTimeMode.current
-                          ? 'Using current time'
-                          : astronomyCustomTimeLabel,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _CitySearchField(
-                    label: 'Observer city',
-                    controller: astronomyObserverController,
-                    onSelected: onAstronomyObserverSelected,
-                    searchCities: onSearchCities,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          astronomyObserverName == null
-                              ? 'Observer: none selected'
-                              : 'Observer: $astronomyObserverName',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF335C67),
-                            height: 1.35,
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              astronomyObserverName == null
+                                  ? 'Observer: none selected'
+                                  : 'Observer: $astronomyObserverName',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      OutlinedButton(
-                        onPressed: astronomyObserverName == null
-                            ? null
-                            : onClearAstronomyObserver,
-                        child: const Text('Clear'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Sun/Moon playback',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF112A46),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _SelectionField(
-                    labelText: 'Range',
-                    valueText:
-                        _formatPlaybackPresetLabel(astronomyPlaybackPreset),
-                    currentValue: astronomyPlaybackPreset,
-                    onChanged: onAstronomyPlaybackPresetChanged,
-                    options: [
-                      for (final preset in _AstronomyPlaybackPreset.values)
-                        _ChoiceItem(
-                          value: preset,
-                          label: _formatPlaybackPresetLabel(preset),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _SelectionField(
-                    labelText: 'Playback speed',
-                    valueText:
-                        _formatPlaybackSpeedLabel(astronomyPlaybackSpeed),
-                    currentValue: astronomyPlaybackSpeed,
-                    onChanged: onAstronomyPlaybackSpeedChanged,
-                    options: [
-                      for (final speed in _AstronomyPlaybackSpeed.values)
-                        _ChoiceItem(
-                          value: speed,
-                          label: _formatPlaybackSpeedLabel(speed),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: onAstronomyPlaybackStartPressed,
-                          child: Text('Start: $astronomyPlaybackStartLabel'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: onAstronomyPlaybackEndPressed,
-                          child: Text('End: $astronomyPlaybackEndLabel'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Scrub time: $astronomyPlaybackCurrentLabel',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF335C67),
-                          height: 1.35,
-                        ),
-                      ),
-                      Slider(
-                        value: astronomyPlaybackProgress,
-                        onChanged: onAstronomyPlaybackProgressChanged,
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF112A46),
-                            foregroundColor: const Color(0xFFF8F3E8),
+                          const SizedBox(width: 10),
+                          OutlinedButton(
+                            onPressed: astronomyObserverName == null
+                                ? null
+                                : onClearAstronomyObserver,
+                            child: const Text('Clear'),
                           ),
-                          onPressed: onAstronomyPlaybackToggle,
-                          child: Text(isAstronomyPlaying ? 'Pause' : 'Play'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed:
-                              astronomyTimeMode == _AstronomyTimeMode.custom &&
-                                      (isAstronomyPlaying ||
-                                          astronomyPlaybackProgress > 0)
-                                  ? onAstronomyPlaybackStop
-                                  : null,
-                          child: const Text('Restart'),
-                        ),
+                        ],
                       ),
                     ],
                   ),
@@ -3713,27 +4009,6 @@ class _IntroPanel extends StatelessWidget {
     return null;
   }
 
-  String _formatPlaybackPresetLabel(_AstronomyPlaybackPreset preset) {
-    return switch (preset) {
-      _AstronomyPlaybackPreset.oneDay => '1 day',
-      _AstronomyPlaybackPreset.sevenDays => '7 days',
-      _AstronomyPlaybackPreset.twentyEightDays => '28 days',
-      _AstronomyPlaybackPreset.threeSixtyFiveDays => '365 days',
-      _AstronomyPlaybackPreset.fiveYears => '5 years',
-      _AstronomyPlaybackPreset.tenYears => '10 years',
-      _AstronomyPlaybackPreset.custom => 'Custom',
-    };
-  }
-
-  String _formatPlaybackSpeedLabel(_AstronomyPlaybackSpeed speed) {
-    return switch (speed) {
-      _AstronomyPlaybackSpeed.slow => 'Slow',
-      _AstronomyPlaybackSpeed.normal => 'Normal',
-      _AstronomyPlaybackSpeed.fast => 'Fast',
-      _AstronomyPlaybackSpeed.veryFast => 'Very fast',
-    };
-  }
-
   String _formatEventSubtype(AstronomyEvent event) {
     return switch (event.subtype) {
       'solar_total' => 'Solar total',
@@ -3995,6 +4270,235 @@ class _SelectionFieldState<T> extends State<_SelectionField<T>> {
             ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _SharedTimePlaybackSection extends StatelessWidget {
+  const _SharedTimePlaybackSection({
+    required this.enabled,
+    required this.astronomyTimeMode,
+    required this.astronomyDisplayTimeZone,
+    required this.astronomyDisplayTimeZoneOptions,
+    required this.astronomyCustomTimeLabel,
+    required this.astronomyPlaybackStartLabel,
+    required this.astronomyPlaybackEndLabel,
+    required this.astronomyPlaybackCurrentLabel,
+    required this.astronomyPlaybackProgress,
+    required this.astronomyPlaybackPreset,
+    required this.astronomyPlaybackSpeed,
+    required this.isAstronomyPlaying,
+    required this.onAstronomyTimeModeChanged,
+    required this.onAstronomyDisplayTimeZoneChanged,
+    required this.onAstronomyDateTimePressed,
+    required this.onAstronomyPlaybackPresetChanged,
+    required this.onAstronomyPlaybackSpeedChanged,
+    required this.onAstronomyPlaybackStartPressed,
+    required this.onAstronomyPlaybackEndPressed,
+    required this.onAstronomyPlaybackProgressChanged,
+    required this.onAstronomyPlaybackToggle,
+    required this.onAstronomyPlaybackStop,
+    this.title,
+    this.middleChildren = const <Widget>[],
+  });
+
+  final bool enabled;
+  final String? title;
+  final List<Widget> middleChildren;
+  final _AstronomyTimeMode astronomyTimeMode;
+  final String astronomyDisplayTimeZone;
+  final List<_ChoiceItem<String>> astronomyDisplayTimeZoneOptions;
+  final String astronomyCustomTimeLabel;
+  final String astronomyPlaybackStartLabel;
+  final String astronomyPlaybackEndLabel;
+  final String astronomyPlaybackCurrentLabel;
+  final double astronomyPlaybackProgress;
+  final _AstronomyPlaybackPreset astronomyPlaybackPreset;
+  final _AstronomyPlaybackSpeed astronomyPlaybackSpeed;
+  final bool isAstronomyPlaying;
+  final ValueChanged<_AstronomyTimeMode?> onAstronomyTimeModeChanged;
+  final ValueChanged<String?> onAstronomyDisplayTimeZoneChanged;
+  final VoidCallback onAstronomyDateTimePressed;
+  final ValueChanged<_AstronomyPlaybackPreset?>
+      onAstronomyPlaybackPresetChanged;
+  final ValueChanged<_AstronomyPlaybackSpeed?> onAstronomyPlaybackSpeedChanged;
+  final VoidCallback onAstronomyPlaybackStartPressed;
+  final VoidCallback onAstronomyPlaybackEndPressed;
+  final ValueChanged<double> onAstronomyPlaybackProgressChanged;
+  final VoidCallback onAstronomyPlaybackToggle;
+  final VoidCallback onAstronomyPlaybackStop;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title != null) ...[
+          Text(
+            title!,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF112A46),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        _SelectionField(
+          labelText: 'Map time',
+          valueText: astronomyTimeMode == _AstronomyTimeMode.current
+              ? 'Current time'
+              : 'Custom time',
+          currentValue: astronomyTimeMode,
+          enabled: enabled,
+          onChanged: onAstronomyTimeModeChanged,
+          options: const [
+            _ChoiceItem(
+              value: _AstronomyTimeMode.current,
+              label: 'Current time',
+            ),
+            _ChoiceItem(
+              value: _AstronomyTimeMode.custom,
+              label: 'Custom time',
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _SelectionField(
+          labelText: 'Display time zone',
+          valueText: astronomyDisplayTimeZoneOptions
+              .firstWhere(
+                (option) => option.value == astronomyDisplayTimeZone,
+                orElse: () => astronomyDisplayTimeZoneOptions.first,
+              )
+              .label,
+          helperText:
+              'Default is local time. Fixed UTC offsets are display-only.',
+          currentValue: astronomyDisplayTimeZone,
+          enabled: enabled,
+          onChanged: onAstronomyDisplayTimeZoneChanged,
+          options: astronomyDisplayTimeZoneOptions,
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton(
+          onPressed: enabled && astronomyTimeMode == _AstronomyTimeMode.custom
+              ? onAstronomyDateTimePressed
+              : null,
+          child: Text(
+            astronomyTimeMode == _AstronomyTimeMode.current
+                ? 'Using current time'
+                : astronomyCustomTimeLabel,
+          ),
+        ),
+        if (middleChildren.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          ...middleChildren,
+        ],
+        const SizedBox(height: 14),
+        const Text(
+          'Time playback',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF112A46),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _SelectionField(
+          labelText: 'Range',
+          valueText: _playbackPresetLabel(astronomyPlaybackPreset),
+          currentValue: astronomyPlaybackPreset,
+          enabled: enabled,
+          onChanged: onAstronomyPlaybackPresetChanged,
+          options: [
+            for (final preset in _AstronomyPlaybackPreset.values)
+              _ChoiceItem(
+                value: preset,
+                label: _playbackPresetLabel(preset),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _SelectionField(
+          labelText: 'Playback speed',
+          valueText: _playbackSpeedLabel(astronomyPlaybackSpeed),
+          currentValue: astronomyPlaybackSpeed,
+          enabled: enabled,
+          onChanged: onAstronomyPlaybackSpeedChanged,
+          options: [
+            for (final speed in _AstronomyPlaybackSpeed.values)
+              _ChoiceItem(
+                value: speed,
+                label: _playbackSpeedLabel(speed),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: enabled ? onAstronomyPlaybackStartPressed : null,
+                child: Text('Start: $astronomyPlaybackStartLabel'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: enabled ? onAstronomyPlaybackEndPressed : null,
+                child: Text('End: $astronomyPlaybackEndLabel'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Scrub time: $astronomyPlaybackCurrentLabel',
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF335C67),
+                height: 1.35,
+              ),
+            ),
+            Slider(
+              value: astronomyPlaybackProgress,
+              onChanged: enabled ? onAstronomyPlaybackProgressChanged : null,
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF112A46),
+                  foregroundColor: const Color(0xFFF8F3E8),
+                ),
+                onPressed: enabled ? onAstronomyPlaybackToggle : null,
+                child: Text(isAstronomyPlaying ? 'Pause' : 'Play'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: enabled &&
+                        astronomyTimeMode == _AstronomyTimeMode.custom &&
+                        (isAstronomyPlaying || astronomyPlaybackProgress > 0)
+                    ? onAstronomyPlaybackStop
+                    : null,
+                child: const Text('Restart'),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

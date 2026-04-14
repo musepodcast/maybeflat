@@ -11,6 +11,7 @@ import '../models/map_label.dart';
 import '../models/map_shape.dart';
 import '../models/place_marker.dart';
 import '../models/sky_catalog.dart';
+import '../models/wind_snapshot.dart';
 import '../services/sky_catalog_loader.dart';
 
 class MapTapLocation {
@@ -651,6 +652,18 @@ class _SelectedAstronomyTarget {
   final _AstronomySelectionKind kind;
 }
 
+class _WindTracePoint {
+  const _WindTracePoint({
+    required this.latitude,
+    required this.longitude,
+    required this.speedMps,
+  });
+
+  final double latitude;
+  final double longitude;
+  final double speedMps;
+}
+
 const Map<String, String> _zodiacGlyphs = <String, String>{
   'aries': '♈',
   'taurus': '♉',
@@ -825,6 +838,9 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.showStars,
     required this.showConstellations,
     required this.showConstellationsFullSky,
+    required this.windSnapshot,
+    required this.showWind,
+    required this.animateWind,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
@@ -853,6 +869,9 @@ class FlatWorldCanvas extends StatefulWidget {
   final bool showStars;
   final bool showConstellations;
   final bool showConstellationsFullSky;
+  final WindSnapshot? windSnapshot;
+  final bool showWind;
+  final bool animateWind;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
@@ -892,10 +911,11 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
   _SelectedAstronomyTarget? _selectedAstronomyTarget;
 
   bool get _shouldAnimateAstronomy =>
-      widget.astronomySnapshot != null &&
-      (widget.showSunPath ||
-          widget.showMoonPath ||
-          widget.visiblePlanetNames.isNotEmpty);
+      (widget.astronomySnapshot != null &&
+          (widget.showSunPath ||
+              widget.showMoonPath ||
+              widget.visiblePlanetNames.isNotEmpty)) ||
+      (widget.showWind && widget.animateWind && widget.windSnapshot != null);
 
   @override
   void initState() {
@@ -1131,6 +1151,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                         widget.showConstellations,
                                     showConstellationsFullSky:
                                         widget.showConstellationsFullSky,
+                                    windSnapshot: widget.windSnapshot,
+                                    showWind: widget.showWind,
+                                    animateWind: widget.animateWind,
                                     visiblePlanetNames:
                                         widget.visiblePlanetNames,
                                     astronomyObserverName:
@@ -2516,6 +2539,9 @@ class _FlatWorldPainter extends CustomPainter {
     required this.showStars,
     required this.showConstellations,
     required this.showConstellationsFullSky,
+    required this.windSnapshot,
+    required this.showWind,
+    required this.animateWind,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
     required this.routePoints,
@@ -2551,6 +2577,9 @@ class _FlatWorldPainter extends CustomPainter {
   final bool showStars;
   final bool showConstellations;
   final bool showConstellationsFullSky;
+  final WindSnapshot? windSnapshot;
+  final bool showWind;
+  final bool animateWind;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
   final List<PlaceMarker?> routePoints;
@@ -2564,6 +2593,10 @@ class _FlatWorldPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = projectedScene.center;
     final mapRadius = projectedScene.mapRadius;
+
+    if (showWind && windSnapshot != null) {
+      _paintWindOverlay(canvas, center, mapRadius);
+    }
 
     if (astronomySnapshot != null &&
         (showSunPath ||
@@ -2653,6 +2686,10 @@ class _FlatWorldPainter extends CustomPainter {
           leaderColor: const Color(0xAA112A46),
         );
       }
+    }
+
+    if (showWind && windSnapshot != null) {
+      _paintWindLegend(canvas);
     }
 
     if (projectedScene.landEntries.isEmpty &&
@@ -3251,6 +3288,590 @@ class _FlatWorldPainter extends CustomPainter {
       return lerped - 360;
     }
     return lerped;
+  }
+
+  Color _windSpeedColor(
+    double speedMps,
+    double minSpeedMps,
+    double maxSpeedMps,
+  ) {
+    final span = math.max(0.1, maxSpeedMps - minSpeedMps);
+    final t = ((speedMps - minSpeedMps) / span).clamp(0.0, 1.0).toDouble();
+    const stopValues = <double>[0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0];
+    const stopColors = <Color>[
+      Color(0xFF7F3FBF),
+      Color(0xFF4B3FBF),
+      Color(0xFF2C6EE8),
+      Color(0xFF2FAE63),
+      Color(0xFFF2D13D),
+      Color(0xFFF28C28),
+      Color(0xFFE63B2E),
+    ];
+    for (var index = 0; index < stopValues.length - 1; index += 1) {
+      final currentValue = stopValues[index];
+      final nextValue = stopValues[index + 1];
+      if (t <= nextValue) {
+        final localT = ((t - currentValue) / (nextValue - currentValue))
+            .clamp(0.0, 1.0)
+            .toDouble();
+        return Color.lerp(stopColors[index], stopColors[index + 1], localT) ??
+            stopColors[index + 1];
+      }
+    }
+    return stopColors.last;
+  }
+
+  ({double min, double max}) _windColorDomain(WindSnapshot snapshot) {
+    if (snapshot.vectors.isEmpty) {
+      return (min: 0.0, max: 1.0);
+    }
+
+    final speeds = snapshot.vectors
+        .map((vector) => vector.speedMps)
+        .toList(growable: false)
+      ..sort();
+    final lowIndex = ((speeds.length - 1) * 0.06).round();
+    final highIndex = ((speeds.length - 1) * 0.82).round();
+    final minSpeed = speeds[lowIndex.clamp(0, speeds.length - 1)];
+    final maxSpeed = speeds[highIndex.clamp(0, speeds.length - 1)];
+    if (maxSpeed <= minSpeed) {
+      return (
+        min: snapshot.minSpeedMps,
+        max: math.max(snapshot.maxSpeedMps, snapshot.minSpeedMps + 0.1),
+      );
+    }
+    return (min: minSpeed, max: maxSpeed);
+  }
+
+  void _paintWindArrowhead(
+    Canvas canvas, {
+    required Offset start,
+    required Offset end,
+    required Color color,
+    required double speedT,
+  }) {
+    final direction = end - start;
+    final distance = direction.distance;
+    if (distance <= 0.001) {
+      return;
+    }
+    final unit = direction / distance;
+    final normal = Offset(-unit.dy, unit.dx);
+    final headLength = (7.0 + (4.0 * speedT)) / viewScale.clamp(1.0, 24.0);
+    final headWidth = (3.2 + (1.8 * speedT)) / viewScale.clamp(1.0, 24.0);
+    final base = end - (unit * headLength);
+    final arrowPath = Path()
+      ..moveTo(end.dx, end.dy)
+      ..lineTo(
+        base.dx + (normal.dx * headWidth),
+        base.dy + (normal.dy * headWidth),
+      )
+      ..lineTo(
+        base.dx - (normal.dx * headWidth),
+        base.dy - (normal.dy * headWidth),
+      )
+      ..close();
+    canvas.drawPath(
+      arrowPath,
+      Paint()..color = color,
+    );
+    canvas.drawPath(
+      arrowPath,
+      Paint()
+        ..color = const Color(0xEAF8FBF6)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _screenStableRadius(0.7, viewScale, minRadius: 0.3),
+    );
+  }
+
+  WindVector? _sampleWindField(
+    WindSnapshot snapshot,
+    double latitude,
+    double longitude,
+  ) {
+    final neighborRadiusDegrees =
+        math.max(12.0, snapshot.gridStepDegrees * 1.9).toDouble();
+    final candidates = <({double distance, WindVector vector})>[];
+
+    for (final vector in snapshot.vectors) {
+      final latitudeDistance = (vector.latitude - latitude).abs();
+      if (latitudeDistance > neighborRadiusDegrees) {
+        continue;
+      }
+      final longitudeDistance = _longitudeDistanceDegrees(
+        vector.longitude,
+        longitude,
+      );
+      if (longitudeDistance > neighborRadiusDegrees * 1.25) {
+        continue;
+      }
+      final distance = math.sqrt(
+        (latitudeDistance * latitudeDistance) +
+            (longitudeDistance * longitudeDistance),
+      );
+      if (distance <= 0.001) {
+        return vector;
+      }
+      candidates.add((distance: distance, vector: vector));
+    }
+
+    if (candidates.isEmpty) {
+      return null;
+    }
+
+    candidates.sort((left, right) => left.distance.compareTo(right.distance));
+    final nearest = candidates.take(6);
+    var totalWeight = 0.0;
+    var summedU = 0.0;
+    var summedV = 0.0;
+
+    for (final candidate in nearest) {
+      final weight = 1.0 / math.max(0.2, candidate.distance);
+      totalWeight += weight;
+      summedU += candidate.vector.uMps * weight;
+      summedV += candidate.vector.vMps * weight;
+    }
+
+    if (totalWeight <= 0) {
+      return null;
+    }
+
+    final uMps = summedU / totalWeight;
+    final vMps = summedV / totalWeight;
+    return WindVector(
+      latitude: latitude,
+      longitude: longitude,
+      uMps: uMps,
+      vMps: vMps,
+      speedMps: math.sqrt((uMps * uMps) + (vMps * vMps)),
+    );
+  }
+
+  List<_WindTracePoint> _traceWindDirection(
+    WindSnapshot snapshot, {
+    required double seedLatitude,
+    required double seedLongitude,
+    required int directionSign,
+    required int maxSteps,
+  }) {
+    final points = <_WindTracePoint>[];
+    var latitude = seedLatitude;
+    var longitude = seedLongitude;
+
+    for (var step = 0; step < maxSteps; step += 1) {
+      final sample = _sampleWindField(snapshot, latitude, longitude);
+      if (sample == null || sample.speedMps <= 0.18) {
+        break;
+      }
+
+      points.add(
+        _WindTracePoint(
+          latitude: latitude,
+          longitude: longitude,
+          speedMps: sample.speedMps,
+        ),
+      );
+
+      final longitudeScale = math.max(
+        0.28,
+        math.cos(latitude * math.pi / 180).abs(),
+      );
+      final directionLatitude = sample.vMps / math.max(sample.speedMps, 0.1);
+      final directionLongitude =
+          (sample.uMps / math.max(sample.speedMps, 0.1)) / longitudeScale;
+      final directionMagnitude = math.sqrt(
+        (directionLatitude * directionLatitude) +
+            (directionLongitude * directionLongitude),
+      );
+      if (directionMagnitude <= 0.001) {
+        break;
+      }
+
+      final normalizedLatitude = directionLatitude / directionMagnitude;
+      final normalizedLongitude = directionLongitude / directionMagnitude;
+      final stepDegrees =
+          (snapshot.gridStepDegrees * 0.24).clamp(1.45, 3.6).toDouble();
+      latitude = (latitude + (normalizedLatitude * stepDegrees * directionSign))
+          .clamp(-88.0, 88.0);
+      longitude = _normalizeSignedDegrees(
+        longitude + (normalizedLongitude * stepDegrees * directionSign),
+      );
+    }
+
+    return points;
+  }
+
+  List<_WindTracePoint> _buildWindStreamline(
+    WindSnapshot snapshot, {
+    required double seedLatitude,
+    required double seedLongitude,
+  }) {
+    final backward = _traceWindDirection(
+      snapshot,
+      seedLatitude: seedLatitude,
+      seedLongitude: seedLongitude,
+      directionSign: -1,
+      maxSteps: 12,
+    );
+    final forward = _traceWindDirection(
+      snapshot,
+      seedLatitude: seedLatitude,
+      seedLongitude: seedLongitude,
+      directionSign: 1,
+      maxSteps: 16,
+    );
+
+    final streamline = <_WindTracePoint>[
+      ...backward.reversed.skip(backward.isEmpty ? 0 : 1),
+      ...forward,
+    ];
+    return streamline.length >= 4 ? streamline : const <_WindTracePoint>[];
+  }
+
+  Path _buildWindPath(
+    List<_WindTracePoint> streamline,
+    Offset center,
+    double mapRadius,
+  ) {
+    final path = Path();
+    if (streamline.isEmpty) {
+      return path;
+    }
+    final projectedPoints = <Offset>[
+      for (final tracePoint in streamline)
+        _projectLatLon(
+          center,
+          mapRadius,
+          tracePoint.latitude,
+          tracePoint.longitude,
+        ),
+    ];
+    final firstPoint = projectedPoints.first;
+    path.moveTo(firstPoint.dx, firstPoint.dy);
+
+    if (projectedPoints.length == 1) {
+      return path;
+    }
+    if (projectedPoints.length == 2) {
+      final secondPoint = projectedPoints[1];
+      path.lineTo(secondPoint.dx, secondPoint.dy);
+      return path;
+    }
+
+    for (var index = 1; index < projectedPoints.length - 1; index += 1) {
+      final current = projectedPoints[index];
+      final next = projectedPoints[index + 1];
+      final midpoint = Offset(
+        (current.dx + next.dx) / 2,
+        (current.dy + next.dy) / 2,
+      );
+      path.quadraticBezierTo(current.dx, current.dy, midpoint.dx, midpoint.dy);
+    }
+    final penultimate = projectedPoints[projectedPoints.length - 2];
+    final last = projectedPoints.last;
+    path.quadraticBezierTo(penultimate.dx, penultimate.dy, last.dx, last.dy);
+    return path;
+  }
+
+  void _paintWindOverlay(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+  ) {
+    final snapshot = windSnapshot;
+    if (snapshot == null || snapshot.vectors.isEmpty) {
+      return;
+    }
+
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)),
+    );
+
+    final outlinePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    final windPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    final corePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+    final colorDomain = _windColorDomain(snapshot);
+    final minSpeed = colorDomain.min;
+    final maxSpeed = math.max(colorDomain.max, minSpeed + 0.1);
+    final animationPhase = animateWind ? astronomyPulseAnimation.value : 0.5;
+
+    final seedLatitudes = <double>{
+      for (final vector in snapshot.vectors) vector.latitude,
+    }.toList()
+      ..sort();
+    final seedLongitudes = <double>{
+      for (final vector in snapshot.vectors) vector.longitude,
+    }.toList()
+      ..sort();
+    final halfStep = (snapshot.gridStepDegrees / 2).toDouble();
+    final seeds = <({double latitude, double longitude, double seed})>[
+      for (final vector in snapshot.vectors)
+        (
+          latitude: vector.latitude,
+          longitude: vector.longitude,
+          seed: (((vector.latitude + 90) * 0.017) +
+                  ((vector.longitude + 180) * 0.0097))
+              .remainder(1.0),
+        ),
+    ];
+    if (snapshot.gridStepDegrees >= 12) {
+      for (var rowIndex = 0; rowIndex < seedLatitudes.length; rowIndex += 1) {
+        final latitude = seedLatitudes[rowIndex];
+        final longitudeOffset = rowIndex.isEven ? halfStep : 0.0;
+        for (final longitude in seedLongitudes) {
+          final shiftedLongitude =
+              _normalizeSignedDegrees(longitude + longitudeOffset);
+          seeds.add(
+            (
+              latitude: latitude.clamp(-82.0, 82.0),
+              longitude: shiftedLongitude,
+              seed: (((latitude + 90) * 0.013) +
+                      ((shiftedLongitude + 180) * 0.011))
+                  .remainder(1.0),
+            ),
+          );
+        }
+      }
+    }
+
+    for (final seed in seeds) {
+      final streamline = _buildWindStreamline(
+        snapshot,
+        seedLatitude: seed.latitude,
+        seedLongitude: seed.longitude,
+      );
+      if (streamline.isEmpty) {
+        continue;
+      }
+
+      final averageSpeed = streamline
+              .map((tracePoint) => tracePoint.speedMps)
+              .fold<double>(0, (sum, speed) => sum + speed) /
+          streamline.length;
+      final peakSpeed = streamline
+          .map((tracePoint) => tracePoint.speedMps)
+          .fold<double>(0, math.max);
+      final representativeSpeed = (averageSpeed * 0.5) + (peakSpeed * 0.5);
+      final speedT = ((representativeSpeed - minSpeed) / (maxSpeed - minSpeed))
+          .clamp(0.0, 1.0);
+      final lineColor =
+          _windSpeedColor(representativeSpeed, minSpeed, maxSpeed);
+      final alpha = (56 + (118 * speedT)).round().clamp(0, 255);
+      final fullPath = _buildWindPath(streamline, center, mapRadius);
+
+      outlinePaint
+        ..color = lineColor.withAlpha((alpha * 0.16).round())
+        ..strokeWidth = _screenStableRadius(3.4, viewScale, minRadius: 1.1);
+      windPaint
+        ..color = lineColor.withAlpha((alpha * 0.55).round())
+        ..strokeWidth = _screenStableRadius(1.55, viewScale, minRadius: 0.62);
+      canvas.drawPath(fullPath, outlinePaint);
+      canvas.drawPath(fullPath, windPaint);
+
+      final segmentCount = streamline.length - 1;
+      if (segmentCount < 3) {
+        continue;
+      }
+      final headProgress =
+          animateWind ? (animationPhase + seed.seed).remainder(1.0) : 0.58;
+      final headIndex = (1 + (headProgress * (streamline.length - 2)))
+          .round()
+          .clamp(2, streamline.length - 1)
+          .toInt();
+      final tailIndex = math
+          .max(
+            0,
+            headIndex - math.max(3, (streamline.length * 0.45).round()),
+          )
+          .toInt();
+      final highlightPoints = streamline.sublist(tailIndex, headIndex + 1);
+      final highlightPath = _buildWindPath(highlightPoints, center, mapRadius);
+
+      outlinePaint
+        ..color = lineColor.withAlpha((alpha * 0.34).round())
+        ..strokeWidth = _screenStableRadius(4.8, viewScale, minRadius: 1.55);
+      windPaint
+        ..color = lineColor.withAlpha(alpha)
+        ..strokeWidth = _screenStableRadius(2.2, viewScale, minRadius: 0.86);
+      corePaint
+        ..color = Color.fromARGB(
+          (178 + (54 * speedT)).round().clamp(0, 255),
+          250,
+          252,
+          255,
+        )
+        ..strokeWidth = _screenStableRadius(0.92, viewScale, minRadius: 0.42);
+
+      canvas.drawPath(highlightPath, outlinePaint);
+      canvas.drawPath(highlightPath, windPaint);
+      canvas.drawPath(highlightPath, corePaint);
+
+      if (highlightPoints.length >= 2) {
+        final arrowStart = _projectLatLon(
+          center,
+          mapRadius,
+          highlightPoints[highlightPoints.length - 2].latitude,
+          highlightPoints[highlightPoints.length - 2].longitude,
+        );
+        final arrowEnd = _projectLatLon(
+          center,
+          mapRadius,
+          highlightPoints.last.latitude,
+          highlightPoints.last.longitude,
+        );
+        _paintWindArrowhead(
+          canvas,
+          start: arrowStart,
+          end: arrowEnd,
+          color: lineColor.withAlpha((alpha * 0.96).round()),
+          speedT: speedT,
+        );
+      }
+    }
+
+    canvas.restore();
+  }
+
+  void _paintWindLegend(Canvas canvas) {
+    final snapshot = windSnapshot;
+    if (snapshot == null) {
+      return;
+    }
+    final colorDomain = _windColorDomain(snapshot);
+
+    const legendWidth = 184.0;
+    const legendHeight = 66.0;
+    const horizontalPadding = 12.0;
+    final stableScale = _screenStableLabelScale(viewScale);
+    final leftInsetInScreen = projectedScene.size.width < 560 ? 36.0 : 40.0;
+    final halfWidth = legendWidth / 2;
+    final contentLeft = -(halfWidth - horizontalPadding);
+    final contentRight = halfWidth - horizontalPadding;
+    final barRect = Rect.fromLTWH(
+      contentLeft,
+      -2,
+      legendWidth - (horizontalPadding * 2),
+      14,
+    );
+    final anchor = Offset(
+      visibleSceneRect.left +
+          ((legendWidth / 2) + leftInsetInScreen) / viewScale.clamp(1.0, 24.0),
+      visibleSceneRect.top +
+          ((legendHeight / 2) + 18) / viewScale.clamp(1.0, 24.0),
+    );
+
+    canvas.save();
+    canvas.translate(anchor.dx, anchor.dy);
+    canvas.rotate(-viewRotationRadians);
+    canvas.scale(stableScale);
+
+    final background = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset.zero,
+        width: legendWidth,
+        height: legendHeight,
+      ),
+      const Radius.circular(16),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()..color = const Color(0xEAF8FBF6),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()
+        ..color = const Color(0xFFBFCBD5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+
+    final titlePainter = TextPainter(
+      text: const TextSpan(
+        text: 'Wind speed (m/s)',
+        style: TextStyle(
+          color: Color(0xFF112A46),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: legendWidth - (horizontalPadding * 2));
+    titlePainter.paint(canvas, Offset(contentLeft, -29));
+
+    final subtitlePainter = TextPainter(
+      text: TextSpan(
+        text: snapshot.level == 'surface' ? 'Surface' : '${snapshot.level} hPa',
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 68);
+    subtitlePainter.paint(
+      canvas,
+      Offset(contentRight - subtitlePainter.width, -29),
+    );
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(barRect, const Radius.circular(999)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          barRect.topLeft,
+          barRect.topRight,
+          const [
+            Color(0xFF7F3FBF),
+            Color(0xFF4B3FBF),
+            Color(0xFF2C6EE8),
+            Color(0xFF2FAE63),
+            Color(0xFFF2D13D),
+            Color(0xFFF28C28),
+            Color(0xFFE63B2E),
+          ],
+          const [0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0],
+        ),
+    );
+
+    final minPainter = TextPainter(
+      text: TextSpan(
+        text: colorDomain.min.toStringAsFixed(1),
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 40);
+    final maxPainter = TextPainter(
+      text: TextSpan(
+        text: colorDomain.max.toStringAsFixed(1),
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 40);
+    minPainter.paint(canvas, Offset(contentLeft, 18));
+    maxPainter.paint(canvas, Offset(contentRight - maxPainter.width, 18));
+
+    canvas.restore();
   }
 
   void _paintAstronomyOverlay(
@@ -4649,6 +5270,9 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.showStars != showStars ||
         oldDelegate.showConstellations != showConstellations ||
         oldDelegate.showConstellationsFullSky != showConstellationsFullSky ||
+        oldDelegate.windSnapshot != windSnapshot ||
+        oldDelegate.showWind != showWind ||
+        oldDelegate.animateWind != animateWind ||
         !listEquals(oldDelegate.visiblePlanetNames, visiblePlanetNames) ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||
         oldDelegate.routePoints != routePoints ||
