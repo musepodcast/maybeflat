@@ -12,6 +12,7 @@ from app.schemas.map_models import (
     MeasureResponse,
     TileManifestResponse,
     TransformRequest,
+    WeatherOverlaySnapshotResponse,
     WindSnapshotResponse,
 )
 from app.data.city_search import search_city_entries
@@ -24,6 +25,7 @@ from app.services.flat_world import (
     transform_point,
 )
 from app.services.tile_renderer import build_tile_manifest, render_tile_png
+from app.services.weather_overlays import get_weather_overlay_snapshot
 from app.services.weather_wind import get_wind_snapshot
 
 
@@ -102,6 +104,27 @@ def get_weather_wind(
 ) -> WindSnapshotResponse:
     try:
         return get_wind_snapshot(
+            timestamp_utc=timestamp_utc,
+            level=level,
+            grid_step_degrees=grid_step_degrees,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/weather/overlay", response_model=WeatherOverlaySnapshotResponse)
+def get_weather_overlay(
+    overlay: str = Query(default="wind"),
+    timestamp_utc: str | None = Query(default=None),
+    level: str = Query(
+        default="surface",
+        pattern="^(surface|1000|850|700|500|250|70|10)$",
+    ),
+    grid_step_degrees: int = Query(default=15, ge=5, le=30),
+) -> WeatherOverlaySnapshotResponse:
+    try:
+        return get_weather_overlay_snapshot(
+            overlay=overlay,
             timestamp_utc=timestamp_utc,
             level=level,
             grid_step_degrees=grid_step_degrees,

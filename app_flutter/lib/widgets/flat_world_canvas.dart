@@ -11,6 +11,7 @@ import '../models/map_label.dart';
 import '../models/map_shape.dart';
 import '../models/place_marker.dart';
 import '../models/sky_catalog.dart';
+import '../models/weather_overlay_snapshot.dart';
 import '../models/wind_snapshot.dart';
 import '../services/sky_catalog_loader.dart';
 
@@ -261,6 +262,68 @@ String _formatUtcOffsetLabel(int offsetHours) {
   }
   final sign = offsetHours > 0 ? '+' : '';
   return 'UTC$sign$offsetHours';
+}
+
+bool _isCelsiusWeatherUnit(String unitLabel) {
+  return unitLabel.trim().toLowerCase() == 'c';
+}
+
+double _celsiusToFahrenheit(double valueC) {
+  return (valueC * 9 / 5) + 32;
+}
+
+String _weatherUnitLabelForDisplay(
+  String unitLabel, {
+  bool includeFahrenheitForCelsius = false,
+}) {
+  if (_isCelsiusWeatherUnit(unitLabel)) {
+    return includeFahrenheitForCelsius ? '°C / °F' : '°C';
+  }
+  return unitLabel;
+}
+
+String _weatherValueForDisplay(
+  double value,
+  String unitLabel, {
+  bool includeFahrenheitForCelsius = false,
+  bool multilineForFahrenheit = false,
+}) {
+  if (_isCelsiusWeatherUnit(unitLabel)) {
+    final celsiusText = '${value.toStringAsFixed(1)}°C';
+    if (!includeFahrenheitForCelsius) {
+      return celsiusText;
+    }
+    final fahrenheitText =
+        '${_celsiusToFahrenheit(value).toStringAsFixed(1)}°F';
+    return multilineForFahrenheit
+        ? '$celsiusText\n$fahrenheitText'
+        : '$celsiusText / $fahrenheitText';
+  }
+  final trimmedUnit = unitLabel.trim();
+  return trimmedUnit.isEmpty
+      ? value.toStringAsFixed(1)
+      : '${value.toStringAsFixed(1)} $trimmedUnit';
+}
+
+Offset _legendAnchor({
+  required Rect visibleSceneRect,
+  required double viewScale,
+  required double legendWidth,
+  required double legendHeight,
+  required bool alignRight,
+  required double sceneWidth,
+  double horizontalInsetInScreen = 40.0,
+  double topInsetInScreen = 18.0,
+}) {
+  final sideInset = sceneWidth < 560 ? 36.0 : horizontalInsetInScreen;
+  final x = alignRight
+      ? visibleSceneRect.right -
+          ((legendWidth / 2) + sideInset) / viewScale.clamp(1.0, 24.0)
+      : visibleSceneRect.left +
+          ((legendWidth / 2) + sideInset) / viewScale.clamp(1.0, 24.0);
+  final y = visibleSceneRect.top +
+      ((legendHeight / 2) + topInsetInScreen) / viewScale.clamp(1.0, 24.0);
+  return Offset(x, y);
 }
 
 double _timeZoneLabelFontSize(double viewScale) {
@@ -839,7 +902,10 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.showConstellations,
     required this.showConstellationsFullSky,
     required this.windSnapshot,
-    required this.showWind,
+    required this.showWindAnimation,
+    required this.showWindOverlay,
+    required this.weatherOverlaySnapshot,
+    required this.showWeatherOverlay,
     required this.animateWind,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
@@ -870,7 +936,10 @@ class FlatWorldCanvas extends StatefulWidget {
   final bool showConstellations;
   final bool showConstellationsFullSky;
   final WindSnapshot? windSnapshot;
-  final bool showWind;
+  final bool showWindAnimation;
+  final bool showWindOverlay;
+  final WeatherOverlaySnapshot? weatherOverlaySnapshot;
+  final bool showWeatherOverlay;
   final bool animateWind;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
@@ -915,7 +984,9 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
           (widget.showSunPath ||
               widget.showMoonPath ||
               widget.visiblePlanetNames.isNotEmpty)) ||
-      (widget.showWind && widget.animateWind && widget.windSnapshot != null);
+      (widget.showWindAnimation &&
+          widget.animateWind &&
+          widget.windSnapshot != null);
 
   @override
   void initState() {
@@ -1152,7 +1223,12 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                     showConstellationsFullSky:
                                         widget.showConstellationsFullSky,
                                     windSnapshot: widget.windSnapshot,
-                                    showWind: widget.showWind,
+                                    showWindAnimation: widget.showWindAnimation,
+                                    showWindOverlay: widget.showWindOverlay,
+                                    weatherOverlaySnapshot:
+                                        widget.weatherOverlaySnapshot,
+                                    showWeatherOverlay:
+                                        widget.showWeatherOverlay,
                                     animateWind: widget.animateWind,
                                     visiblePlanetNames:
                                         widget.visiblePlanetNames,
@@ -2540,7 +2616,10 @@ class _FlatWorldPainter extends CustomPainter {
     required this.showConstellations,
     required this.showConstellationsFullSky,
     required this.windSnapshot,
-    required this.showWind,
+    required this.showWindAnimation,
+    required this.showWindOverlay,
+    required this.weatherOverlaySnapshot,
+    required this.showWeatherOverlay,
     required this.animateWind,
     required this.visiblePlanetNames,
     required this.astronomyObserverName,
@@ -2578,7 +2657,10 @@ class _FlatWorldPainter extends CustomPainter {
   final bool showConstellations;
   final bool showConstellationsFullSky;
   final WindSnapshot? windSnapshot;
-  final bool showWind;
+  final bool showWindAnimation;
+  final bool showWindOverlay;
+  final WeatherOverlaySnapshot? weatherOverlaySnapshot;
+  final bool showWeatherOverlay;
   final bool animateWind;
   final List<String> visiblePlanetNames;
   final String? astronomyObserverName;
@@ -2593,8 +2675,20 @@ class _FlatWorldPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = projectedScene.center;
     final mapRadius = projectedScene.mapRadius;
+    final showOverlayLegend =
+        showWeatherOverlay && weatherOverlaySnapshot != null;
+    final showWindLegend =
+        (showWindAnimation || showWindOverlay) && windSnapshot != null;
 
-    if (showWind && windSnapshot != null) {
+    if (showWeatherOverlay && weatherOverlaySnapshot != null) {
+      _paintWeatherOverlayField(canvas, center, mapRadius);
+    }
+
+    if (showWindOverlay && windSnapshot != null) {
+      _paintWindFieldOverlay(canvas, center, mapRadius);
+    }
+
+    if (showWindAnimation && windSnapshot != null) {
       _paintWindOverlay(canvas, center, mapRadius);
     }
 
@@ -2688,8 +2782,12 @@ class _FlatWorldPainter extends CustomPainter {
       }
     }
 
-    if (showWind && windSnapshot != null) {
-      _paintWindLegend(canvas);
+    if (showOverlayLegend && showWindLegend) {
+      _paintCombinedWeatherLegend(canvas);
+    } else if (showOverlayLegend) {
+      _paintWeatherOverlayLegend(canvas);
+    } else if (showWindLegend) {
+      _paintWindLegend(canvas, alignRight: showOverlayLegend);
     }
 
     if (projectedScene.landEntries.isEmpty &&
@@ -3297,6 +3395,10 @@ class _FlatWorldPainter extends CustomPainter {
   ) {
     final span = math.max(0.1, maxSpeedMps - minSpeedMps);
     final t = ((speedMps - minSpeedMps) / span).clamp(0.0, 1.0).toDouble();
+    return _overlayScaleColor(t);
+  }
+
+  Color _overlayScaleColor(double t) {
     const stopValues = <double>[0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0];
     const stopColors = <Color>[
       Color(0xFF7F3FBF),
@@ -3319,6 +3421,63 @@ class _FlatWorldPainter extends CustomPainter {
       }
     }
     return stopColors.last;
+  }
+
+  WeatherOverlayValue? _sampleWeatherOverlayField(
+    WeatherOverlaySnapshot snapshot,
+    double latitude,
+    double longitude,
+  ) {
+    final neighborRadiusDegrees =
+        math.max(12.0, snapshot.gridStepDegrees * 1.9).toDouble();
+    final candidates = <({double distance, WeatherOverlayValue value})>[];
+
+    for (final value in snapshot.values) {
+      final latitudeDistance = (value.latitude - latitude).abs();
+      if (latitudeDistance > neighborRadiusDegrees) {
+        continue;
+      }
+      final longitudeDistance = _longitudeDistanceDegrees(
+        value.longitude,
+        longitude,
+      );
+      if (longitudeDistance > neighborRadiusDegrees * 1.25) {
+        continue;
+      }
+      final distance = math.sqrt(
+        (latitudeDistance * latitudeDistance) +
+            (longitudeDistance * longitudeDistance),
+      );
+      if (distance <= 0.001) {
+        return value;
+      }
+      candidates.add((distance: distance, value: value));
+    }
+
+    if (candidates.isEmpty) {
+      return null;
+    }
+
+    candidates.sort((left, right) => left.distance.compareTo(right.distance));
+    final nearest = candidates.take(6);
+    var totalWeight = 0.0;
+    var summedValue = 0.0;
+
+    for (final candidate in nearest) {
+      final weight = 1.0 / math.max(0.2, candidate.distance);
+      totalWeight += weight;
+      summedValue += candidate.value.value * weight;
+    }
+
+    if (totalWeight <= 0) {
+      return null;
+    }
+
+    return WeatherOverlayValue(
+      latitude: latitude,
+      longitude: longitude,
+      value: summedValue / totalWeight,
+    );
   }
 
   ({double min, double max}) _windColorDomain(WindSnapshot snapshot) {
@@ -3573,6 +3732,256 @@ class _FlatWorldPainter extends CustomPainter {
     return path;
   }
 
+  void _paintWindFieldOverlay(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+  ) {
+    final snapshot = windSnapshot;
+    if (snapshot == null || snapshot.vectors.isEmpty) {
+      return;
+    }
+
+    final colorDomain = _windColorDomain(snapshot);
+    final minSpeed = colorDomain.min;
+    final maxSpeed = math.max(colorDomain.max, minSpeed + 0.1);
+    final latitudeStep = isInteracting
+        ? math.max(6.0, snapshot.gridStepDegrees.toDouble())
+        : math.max(4.0, snapshot.gridStepDegrees / 2);
+    final longitudeStep = latitudeStep;
+    final positions = <Offset>[];
+    final colors = <Color>[];
+    final indices = <int>[];
+
+    for (double latitude = 90.0; latitude > -90.0; latitude -= latitudeStep) {
+      final nextLatitude = math.max(-90.0, latitude - latitudeStep);
+      for (double longitude = -180.0;
+          longitude < 180.0;
+          longitude += longitudeStep) {
+        final nextLongitude = math.min(180.0, longitude + longitudeStep);
+        final topLeft = _projectLatLon(center, mapRadius, latitude, longitude);
+        final topRight = _projectLatLon(
+          center,
+          mapRadius,
+          latitude,
+          nextLongitude,
+        );
+        final bottomRight = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          nextLongitude,
+        );
+        final bottomLeft = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          longitude,
+        );
+
+        final baseIndex = positions.length;
+        positions.addAll([topLeft, topRight, bottomRight, bottomLeft]);
+        colors.addAll([
+          _windShadeColor(
+            snapshot: snapshot,
+            latitude: latitude,
+            longitude: longitude,
+            minSpeed: minSpeed,
+            maxSpeed: maxSpeed,
+          ),
+          _windShadeColor(
+            snapshot: snapshot,
+            latitude: latitude,
+            longitude: nextLongitude,
+            minSpeed: minSpeed,
+            maxSpeed: maxSpeed,
+          ),
+          _windShadeColor(
+            snapshot: snapshot,
+            latitude: nextLatitude,
+            longitude: nextLongitude,
+            minSpeed: minSpeed,
+            maxSpeed: maxSpeed,
+          ),
+          _windShadeColor(
+            snapshot: snapshot,
+            latitude: nextLatitude,
+            longitude: longitude,
+            minSpeed: minSpeed,
+            maxSpeed: maxSpeed,
+          ),
+        ]);
+        indices.addAll([
+          baseIndex,
+          baseIndex + 1,
+          baseIndex + 2,
+          baseIndex,
+          baseIndex + 2,
+          baseIndex + 3,
+        ]);
+      }
+    }
+
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)),
+    );
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        positions,
+        colors: colors,
+        indices: indices,
+      ),
+      BlendMode.srcOver,
+      Paint()..isAntiAlias = true,
+    );
+    canvas.restore();
+  }
+
+  void _paintWeatherOverlayField(
+    Canvas canvas,
+    Offset center,
+    double mapRadius,
+  ) {
+    final snapshot = weatherOverlaySnapshot;
+    if (snapshot == null || snapshot.values.isEmpty) {
+      return;
+    }
+
+    final minValue = snapshot.minValue;
+    final maxValue = math.max(snapshot.maxValue, minValue + 0.1);
+    final latitudeStep = isInteracting
+        ? math.max(6.0, snapshot.gridStepDegrees.toDouble())
+        : math.max(4.0, snapshot.gridStepDegrees / 2);
+    final longitudeStep = latitudeStep;
+    final positions = <Offset>[];
+    final colors = <Color>[];
+    final indices = <int>[];
+
+    for (double latitude = 90.0; latitude > -90.0; latitude -= latitudeStep) {
+      final nextLatitude = math.max(-90.0, latitude - latitudeStep);
+      for (double longitude = -180.0;
+          longitude < 180.0;
+          longitude += longitudeStep) {
+        final nextLongitude = math.min(180.0, longitude + longitudeStep);
+        final topLeft = _projectLatLon(center, mapRadius, latitude, longitude);
+        final topRight = _projectLatLon(
+          center,
+          mapRadius,
+          latitude,
+          nextLongitude,
+        );
+        final bottomRight = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          nextLongitude,
+        );
+        final bottomLeft = _projectLatLon(
+          center,
+          mapRadius,
+          nextLatitude,
+          longitude,
+        );
+
+        final baseIndex = positions.length;
+        positions.addAll([topLeft, topRight, bottomRight, bottomLeft]);
+        colors.addAll([
+          _weatherOverlayShadeColor(
+            snapshot: snapshot,
+            latitude: latitude,
+            longitude: longitude,
+            minValue: minValue,
+            maxValue: maxValue,
+          ),
+          _weatherOverlayShadeColor(
+            snapshot: snapshot,
+            latitude: latitude,
+            longitude: nextLongitude,
+            minValue: minValue,
+            maxValue: maxValue,
+          ),
+          _weatherOverlayShadeColor(
+            snapshot: snapshot,
+            latitude: nextLatitude,
+            longitude: nextLongitude,
+            minValue: minValue,
+            maxValue: maxValue,
+          ),
+          _weatherOverlayShadeColor(
+            snapshot: snapshot,
+            latitude: nextLatitude,
+            longitude: longitude,
+            minValue: minValue,
+            maxValue: maxValue,
+          ),
+        ]);
+        indices.addAll([
+          baseIndex,
+          baseIndex + 1,
+          baseIndex + 2,
+          baseIndex,
+          baseIndex + 2,
+          baseIndex + 3,
+        ]);
+      }
+    }
+
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: mapRadius)),
+    );
+    canvas.drawVertices(
+      ui.Vertices(
+        ui.VertexMode.triangles,
+        positions,
+        colors: colors,
+        indices: indices,
+      ),
+      BlendMode.srcOver,
+      Paint()..isAntiAlias = true,
+    );
+    canvas.restore();
+  }
+
+  Color _weatherOverlayShadeColor({
+    required WeatherOverlaySnapshot snapshot,
+    required double latitude,
+    required double longitude,
+    required double minValue,
+    required double maxValue,
+  }) {
+    final sample = _sampleWeatherOverlayField(snapshot, latitude, longitude);
+    if (sample == null) {
+      return const Color(0x00000000);
+    }
+
+    final valueT = ((sample.value - minValue) / (maxValue - minValue))
+        .clamp(0.0, 1.0)
+        .toDouble();
+    final baseColor = _overlayScaleColor(valueT);
+    return baseColor.withAlpha((38 + (126 * valueT)).round().clamp(0, 255));
+  }
+
+  Color _windShadeColor({
+    required WindSnapshot snapshot,
+    required double latitude,
+    required double longitude,
+    required double minSpeed,
+    required double maxSpeed,
+  }) {
+    final sample = _sampleWindField(snapshot, latitude, longitude);
+    if (sample == null) {
+      return const Color(0x00000000);
+    }
+
+    final speedT =
+        ((sample.speedMps - minSpeed) / (maxSpeed - minSpeed)).clamp(0.0, 1.0);
+    final baseColor = _windSpeedColor(sample.speedMps, minSpeed, maxSpeed);
+    return baseColor.withAlpha((38 + (126 * speedT)).round().clamp(0, 255));
+  }
+
   void _paintWindOverlay(
     Canvas canvas,
     Offset center,
@@ -3745,7 +4154,505 @@ class _FlatWorldPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _paintWindLegend(Canvas canvas) {
+  void _paintWeatherOverlayLegend(Canvas canvas) {
+    final snapshot = weatherOverlaySnapshot;
+    if (snapshot == null) {
+      return;
+    }
+
+    const minLegendWidth = 240.0;
+    const maxLegendWidth = 336.0;
+    const horizontalPadding = 12.0;
+    const topPadding = 10.0;
+    const bottomPadding = 10.0;
+    const gapAfterTitle = 10.0;
+    const gapAfterBar = 6.0;
+    const subtitleReserveWidth = 78.0;
+    const minBarWidth = 168.0;
+    final stableScale = _screenStableLabelScale(viewScale);
+    final titleText = snapshot.unitLabel.isEmpty
+        ? snapshot.overlayLabel
+        : '${snapshot.overlayLabel} (${_weatherUnitLabelForDisplay(snapshot.unitLabel, includeFahrenheitForCelsius: true)})';
+    final subtitleText =
+        snapshot.level == 'surface' ? 'Surface' : '${snapshot.level} hPa';
+    final minText = _weatherValueForDisplay(
+      snapshot.minValue,
+      snapshot.unitLabel,
+      includeFahrenheitForCelsius: true,
+      multilineForFahrenheit: _isCelsiusWeatherUnit(snapshot.unitLabel),
+    );
+    final maxText = _weatherValueForDisplay(
+      snapshot.maxValue,
+      snapshot.unitLabel,
+      includeFahrenheitForCelsius: true,
+      multilineForFahrenheit: _isCelsiusWeatherUnit(snapshot.unitLabel),
+    );
+
+    final titlePainter = TextPainter(
+      text: TextSpan(
+        text: titleText,
+        style: const TextStyle(
+          color: Color(0xFF112A46),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 3,
+    )..layout(
+        maxWidth:
+            maxLegendWidth - (horizontalPadding * 2) - subtitleReserveWidth,
+      );
+
+    final subtitlePainter = TextPainter(
+      text: TextSpan(
+        text: subtitleText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: subtitleReserveWidth);
+
+    final minPainter = TextPainter(
+      text: TextSpan(
+        text: minText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 120);
+    final maxPainter = TextPainter(
+      text: TextSpan(
+        text: maxText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: 120);
+
+    final topSectionWidth = titlePainter.width + 10 + subtitlePainter.width;
+    final labelsWidth = minPainter.width + 36 + maxPainter.width;
+    final contentWidth = math.max(
+      math.max(topSectionWidth, labelsWidth),
+      minBarWidth,
+    );
+    final legendWidth = (contentWidth + (horizontalPadding * 2))
+        .clamp(minLegendWidth, maxLegendWidth)
+        .toDouble();
+    final topSectionHeight =
+        math.max(titlePainter.height, subtitlePainter.height);
+    final legendHeight = topPadding +
+        topSectionHeight +
+        gapAfterTitle +
+        14 +
+        gapAfterBar +
+        math.max(minPainter.height, maxPainter.height) +
+        bottomPadding;
+    final halfWidth = legendWidth / 2;
+    final contentLeft = -(halfWidth - horizontalPadding);
+    final contentRight = halfWidth - horizontalPadding;
+    final titleTop = -legendHeight / 2 + topPadding;
+    final barRect = Rect.fromLTWH(
+      contentLeft,
+      titleTop + topSectionHeight + gapAfterTitle,
+      legendWidth - (horizontalPadding * 2),
+      14,
+    );
+    final labelsTop = barRect.bottom + gapAfterBar;
+    final anchor = _legendAnchor(
+      visibleSceneRect: visibleSceneRect,
+      viewScale: viewScale,
+      legendWidth: legendWidth,
+      legendHeight: legendHeight,
+      alignRight: false,
+      sceneWidth: projectedScene.size.width,
+    );
+
+    canvas.save();
+    canvas.translate(anchor.dx, anchor.dy);
+    canvas.rotate(-viewRotationRadians);
+    canvas.scale(stableScale);
+
+    final background = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset.zero,
+        width: legendWidth,
+        height: legendHeight,
+      ),
+      const Radius.circular(16),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()..color = const Color(0xEAF8FBF6),
+    );
+    canvas.drawRRect(
+      background,
+      Paint()
+        ..color = const Color(0xFFBFCBD5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+
+    titlePainter.paint(canvas, Offset(contentLeft, titleTop));
+    subtitlePainter.paint(
+      canvas,
+      Offset(contentRight - subtitlePainter.width, titleTop),
+    );
+
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(barRect, const Radius.circular(999)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          barRect.topLeft,
+          barRect.topRight,
+          const [
+            Color(0xFF7F3FBF),
+            Color(0xFF4B3FBF),
+            Color(0xFF2C6EE8),
+            Color(0xFF2FAE63),
+            Color(0xFFF2D13D),
+            Color(0xFFF28C28),
+            Color(0xFFE63B2E),
+          ],
+          const [0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0],
+        ),
+    );
+
+    minPainter.paint(canvas, Offset(contentLeft, labelsTop));
+    maxPainter.paint(
+      canvas,
+      Offset(contentRight - maxPainter.width, labelsTop),
+    );
+
+    canvas.restore();
+  }
+
+  void _paintCombinedWeatherLegend(Canvas canvas) {
+    final overlaySnapshot = weatherOverlaySnapshot;
+    final wind = windSnapshot;
+    if (overlaySnapshot == null || wind == null) {
+      return;
+    }
+
+    final windColorDomain = _windColorDomain(wind);
+    const minLegendWidth = 252.0;
+    const maxLegendWidth = 336.0;
+    const horizontalPadding = 12.0;
+    const topPadding = 10.0;
+    const bottomPadding = 10.0;
+    const sectionGap = 12.0;
+    const gapAfterTitle = 8.0;
+    const gapAfterBar = 6.0;
+    const subtitleReserveWidth = 78.0;
+    const minBarWidth = 168.0;
+    final stableScale = _screenStableLabelScale(viewScale);
+
+    final overlayTitleText = overlaySnapshot.unitLabel.isEmpty
+        ? 'Overlay: ${overlaySnapshot.overlayLabel}'
+        : 'Overlay: ${overlaySnapshot.overlayLabel} (${_weatherUnitLabelForDisplay(overlaySnapshot.unitLabel, includeFahrenheitForCelsius: true)})';
+    final overlaySubtitleText = overlaySnapshot.level == 'surface'
+        ? 'Surface'
+        : '${overlaySnapshot.level} hPa';
+    final overlayMinText = _weatherValueForDisplay(
+      overlaySnapshot.minValue,
+      overlaySnapshot.unitLabel,
+      includeFahrenheitForCelsius: true,
+      multilineForFahrenheit: _isCelsiusWeatherUnit(overlaySnapshot.unitLabel),
+    );
+    final overlayMaxText = _weatherValueForDisplay(
+      overlaySnapshot.maxValue,
+      overlaySnapshot.unitLabel,
+      includeFahrenheitForCelsius: true,
+      multilineForFahrenheit: _isCelsiusWeatherUnit(overlaySnapshot.unitLabel),
+    );
+    final animateTitleText = 'Animate: Wind speed (m/s)';
+    final animateSubtitleText =
+        wind.level == 'surface' ? 'Surface' : '${wind.level} hPa';
+
+    final overlayTitlePainter = TextPainter(
+      text: TextSpan(
+        text: overlayTitleText,
+        style: const TextStyle(
+          color: Color(0xFF112A46),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 3,
+    )..layout(
+        maxWidth:
+            maxLegendWidth - (horizontalPadding * 2) - subtitleReserveWidth,
+      );
+    final overlaySubtitlePainter = TextPainter(
+      text: TextSpan(
+        text: overlaySubtitleText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: subtitleReserveWidth);
+    final overlayMinPainter = TextPainter(
+      text: TextSpan(
+        text: overlayMinText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 120);
+    final overlayMaxPainter = TextPainter(
+      text: TextSpan(
+        text: overlayMaxText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: 120);
+
+    final animateTitlePainter = TextPainter(
+      text: TextSpan(
+        text: animateTitleText,
+        style: const TextStyle(
+          color: Color(0xFF112A46),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(
+        maxWidth:
+            maxLegendWidth - (horizontalPadding * 2) - subtitleReserveWidth,
+      );
+    final animateSubtitlePainter = TextPainter(
+      text: TextSpan(
+        text: animateSubtitleText,
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: subtitleReserveWidth);
+    final animateMinPainter = TextPainter(
+      text: TextSpan(
+        text: '${windColorDomain.min.toStringAsFixed(1)} m/s',
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: 40);
+    final animateMaxPainter = TextPainter(
+      text: TextSpan(
+        text: '${windColorDomain.max.toStringAsFixed(1)} m/s',
+        style: const TextStyle(
+          color: Color(0xFF335C67),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: 40);
+
+    final overlayContentWidth = math.max(
+      math.max(
+        overlayTitlePainter.width + 10 + overlaySubtitlePainter.width,
+        overlayMinPainter.width + 36 + overlayMaxPainter.width,
+      ),
+      minBarWidth,
+    );
+    final animateContentWidth = math.max(
+      math.max(
+        animateTitlePainter.width + 10 + animateSubtitlePainter.width,
+        animateMinPainter.width + 36 + animateMaxPainter.width,
+      ),
+      minBarWidth,
+    );
+    final legendWidth = (math.max(overlayContentWidth, animateContentWidth) +
+            (horizontalPadding * 2))
+        .clamp(minLegendWidth, maxLegendWidth)
+        .toDouble();
+    final overlaySectionHeight = math.max(
+          overlayTitlePainter.height,
+          overlaySubtitlePainter.height,
+        ) +
+        gapAfterTitle +
+        14 +
+        gapAfterBar +
+        math.max(overlayMinPainter.height, overlayMaxPainter.height);
+    final animateSectionHeight = math.max(
+          animateTitlePainter.height,
+          animateSubtitlePainter.height,
+        ) +
+        gapAfterTitle +
+        14 +
+        gapAfterBar +
+        math.max(animateMinPainter.height, animateMaxPainter.height);
+    final legendHeight =
+        topPadding + overlaySectionHeight + sectionGap + animateSectionHeight + bottomPadding;
+    final halfWidth = legendWidth / 2;
+    final contentLeft = -(halfWidth - horizontalPadding);
+    final contentRight = halfWidth - horizontalPadding;
+    final anchor = _legendAnchor(
+      visibleSceneRect: visibleSceneRect,
+      viewScale: viewScale,
+      legendWidth: legendWidth,
+      legendHeight: legendHeight,
+      alignRight: false,
+      sceneWidth: projectedScene.size.width,
+    );
+
+    final overlayTitleTop = -legendHeight / 2 + topPadding;
+    final overlayTopSectionHeight = math.max(
+      overlayTitlePainter.height,
+      overlaySubtitlePainter.height,
+    );
+    final overlayBarRect = Rect.fromLTWH(
+      contentLeft,
+      overlayTitleTop + overlayTopSectionHeight + gapAfterTitle,
+      legendWidth - (horizontalPadding * 2),
+      14,
+    );
+    final overlayLabelsTop = overlayBarRect.bottom + gapAfterBar;
+    final dividerY = overlayLabelsTop +
+        math.max(overlayMinPainter.height, overlayMaxPainter.height) +
+        (sectionGap / 2);
+
+    final animateTitleTop = dividerY + (sectionGap / 2);
+    final animateTopSectionHeight = math.max(
+      animateTitlePainter.height,
+      animateSubtitlePainter.height,
+    );
+    final animateBarRect = Rect.fromLTWH(
+      contentLeft,
+      animateTitleTop + animateTopSectionHeight + gapAfterTitle,
+      legendWidth - (horizontalPadding * 2),
+      14,
+    );
+    final animateLabelsTop = animateBarRect.bottom + gapAfterBar;
+
+    canvas.save();
+    canvas.translate(anchor.dx, anchor.dy);
+    canvas.rotate(-viewRotationRadians);
+    canvas.scale(stableScale);
+
+    final background = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset.zero,
+        width: legendWidth,
+        height: legendHeight,
+      ),
+      const Radius.circular(16),
+    );
+    canvas.drawRRect(background, Paint()..color = const Color(0xEAF8FBF6));
+    canvas.drawRRect(
+      background,
+      Paint()
+        ..color = const Color(0xFFBFCBD5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+
+    overlayTitlePainter.paint(canvas, Offset(contentLeft, overlayTitleTop));
+    overlaySubtitlePainter.paint(
+      canvas,
+      Offset(contentRight - overlaySubtitlePainter.width, overlayTitleTop),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(overlayBarRect, const Radius.circular(999)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          overlayBarRect.topLeft,
+          overlayBarRect.topRight,
+          const [
+            Color(0xFF7F3FBF),
+            Color(0xFF4B3FBF),
+            Color(0xFF2C6EE8),
+            Color(0xFF2FAE63),
+            Color(0xFFF2D13D),
+            Color(0xFFF28C28),
+            Color(0xFFE63B2E),
+          ],
+          const [0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0],
+        ),
+    );
+    overlayMinPainter.paint(canvas, Offset(contentLeft, overlayLabelsTop));
+    overlayMaxPainter.paint(
+      canvas,
+      Offset(contentRight - overlayMaxPainter.width, overlayLabelsTop),
+    );
+
+    canvas.drawLine(
+      Offset(contentLeft, dividerY),
+      Offset(contentRight, dividerY),
+      Paint()
+        ..color = const Color(0xFFCFD8DE)
+        ..strokeWidth = 1,
+    );
+
+    animateTitlePainter.paint(canvas, Offset(contentLeft, animateTitleTop));
+    animateSubtitlePainter.paint(
+      canvas,
+      Offset(contentRight - animateSubtitlePainter.width, animateTitleTop),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(animateBarRect, const Radius.circular(999)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          animateBarRect.topLeft,
+          animateBarRect.topRight,
+          const [
+            Color(0xFF7F3FBF),
+            Color(0xFF4B3FBF),
+            Color(0xFF2C6EE8),
+            Color(0xFF2FAE63),
+            Color(0xFFF2D13D),
+            Color(0xFFF28C28),
+            Color(0xFFE63B2E),
+          ],
+          const [0.0, 0.16, 0.32, 0.5, 0.68, 0.84, 1.0],
+        ),
+    );
+    animateMinPainter.paint(canvas, Offset(contentLeft, animateLabelsTop));
+    animateMaxPainter.paint(
+      canvas,
+      Offset(contentRight - animateMaxPainter.width, animateLabelsTop),
+    );
+
+    canvas.restore();
+  }
+
+  void _paintWindLegend(
+    Canvas canvas, {
+    required bool alignRight,
+  }) {
     final snapshot = windSnapshot;
     if (snapshot == null) {
       return;
@@ -3756,7 +4663,6 @@ class _FlatWorldPainter extends CustomPainter {
     const legendHeight = 66.0;
     const horizontalPadding = 12.0;
     final stableScale = _screenStableLabelScale(viewScale);
-    final leftInsetInScreen = projectedScene.size.width < 560 ? 36.0 : 40.0;
     final halfWidth = legendWidth / 2;
     final contentLeft = -(halfWidth - horizontalPadding);
     final contentRight = halfWidth - horizontalPadding;
@@ -3766,11 +4672,13 @@ class _FlatWorldPainter extends CustomPainter {
       legendWidth - (horizontalPadding * 2),
       14,
     );
-    final anchor = Offset(
-      visibleSceneRect.left +
-          ((legendWidth / 2) + leftInsetInScreen) / viewScale.clamp(1.0, 24.0),
-      visibleSceneRect.top +
-          ((legendHeight / 2) + 18) / viewScale.clamp(1.0, 24.0),
+    final anchor = _legendAnchor(
+      visibleSceneRect: visibleSceneRect,
+      viewScale: viewScale,
+      legendWidth: legendWidth,
+      legendHeight: legendHeight,
+      alignRight: alignRight,
+      sceneWidth: projectedScene.size.width,
     );
 
     canvas.save();
@@ -3848,7 +4756,7 @@ class _FlatWorldPainter extends CustomPainter {
 
     final minPainter = TextPainter(
       text: TextSpan(
-        text: colorDomain.min.toStringAsFixed(1),
+        text: '${colorDomain.min.toStringAsFixed(1)} m/s',
         style: const TextStyle(
           color: Color(0xFF335C67),
           fontSize: 11,
@@ -3859,7 +4767,7 @@ class _FlatWorldPainter extends CustomPainter {
     )..layout(maxWidth: 40);
     final maxPainter = TextPainter(
       text: TextSpan(
-        text: colorDomain.max.toStringAsFixed(1),
+        text: '${colorDomain.max.toStringAsFixed(1)} m/s',
         style: const TextStyle(
           color: Color(0xFF335C67),
           fontSize: 11,
@@ -5271,7 +6179,10 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.showConstellations != showConstellations ||
         oldDelegate.showConstellationsFullSky != showConstellationsFullSky ||
         oldDelegate.windSnapshot != windSnapshot ||
-        oldDelegate.showWind != showWind ||
+        oldDelegate.showWindAnimation != showWindAnimation ||
+        oldDelegate.showWindOverlay != showWindOverlay ||
+        oldDelegate.weatherOverlaySnapshot != weatherOverlaySnapshot ||
+        oldDelegate.showWeatherOverlay != showWeatherOverlay ||
         oldDelegate.animateWind != animateWind ||
         !listEquals(oldDelegate.visiblePlanetNames, visiblePlanetNames) ||
         oldDelegate.astronomyObserverName != astronomyObserverName ||

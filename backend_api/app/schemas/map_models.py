@@ -157,6 +157,25 @@ class WindSnapshotResponse(BaseModel):
     vectors: list[WindVectorResponse]
 
 
+class WeatherOverlayValueResponse(BaseModel):
+    latitude: float
+    longitude: float
+    value: float
+
+
+class WeatherOverlaySnapshotResponse(BaseModel):
+    timestamp_utc: str
+    source: str
+    overlay: str
+    overlay_label: str
+    unit_label: str
+    level: str
+    grid_step_degrees: int
+    min_value: float
+    max_value: float
+    values: list[WeatherOverlayValueResponse]
+
+
 class CitySearchResultResponse(BaseModel):
     geoname_id: int
     name: str

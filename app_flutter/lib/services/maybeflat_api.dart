@@ -11,6 +11,7 @@ import '../models/map_label.dart';
 import '../models/measure_result.dart';
 import '../models/map_scene.dart';
 import '../models/place_marker.dart';
+import '../models/weather_overlay_snapshot.dart';
 import '../models/wind_snapshot.dart';
 import 'client_identity.dart';
 
@@ -378,6 +379,42 @@ class MaybeflatApi {
     }
 
     return WindSnapshot.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WeatherOverlaySnapshot> loadWeatherOverlaySnapshot({
+    required String overlay,
+    DateTime? timestampUtc,
+    String level = 'surface',
+    int gridStepDegrees = 15,
+  }) async {
+    final queryParameters = <String, String>{
+      'overlay': overlay,
+      'level': level,
+      'grid_step_degrees': '$gridStepDegrees',
+    };
+    if (timestampUtc != null) {
+      queryParameters['timestamp_utc'] = timestampUtc.toUtc().toIso8601String();
+    }
+
+    final uri = await _buildUri(
+      '/map/weather/overlay',
+      queryParameters: queryParameters,
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to load weather overlay snapshot: ${response.statusCode}',
+      );
+    }
+
+    return WeatherOverlaySnapshot.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }

@@ -12,6 +12,7 @@ import '../models/map_scene.dart';
 import '../models/map_shape.dart';
 import '../models/measure_result.dart';
 import '../models/place_marker.dart';
+import '../models/weather_overlay_snapshot.dart';
 import '../models/wind_snapshot.dart';
 import '../services/maybeflat_api.dart';
 import '../widgets/flat_world_canvas.dart';
@@ -39,6 +40,27 @@ enum _AstronomyPlaybackPreset {
 enum _AstronomyPlaybackSpeed { slow, normal, fast, veryFast }
 
 enum _TimeZoneMode { approximate, real }
+
+enum _WeatherMode { air, none }
+
+enum _AirAnimationMode { wind, currents, waves }
+
+enum _AirOverlayType {
+  wind,
+  temperature,
+  relativeHumidity,
+  dewPointTemperature,
+  wetBulbTemperature,
+  precipitation3h,
+  capeSurface,
+  totalPrecipitableWater,
+  totalCloudWater,
+  meanSeaLevelPressure,
+  miseryIndex,
+  ultravioletIndex,
+  instantaneousWindPowerDensity,
+  none,
+}
 
 const int _minRouteStops = 2;
 const int _maxRouteStops = 6;
@@ -142,6 +164,102 @@ const List<String> _astronomyPlanetNames = <String>[
   'Pluto',
 ];
 
+String _weatherModeLabel(_WeatherMode mode) {
+  return switch (mode) {
+    _WeatherMode.air => 'Air',
+    _WeatherMode.none => 'None',
+  };
+}
+
+String _airAnimationLabel(_AirAnimationMode mode) {
+  return switch (mode) {
+    _AirAnimationMode.wind => 'Wind',
+    _AirAnimationMode.currents => 'Currents',
+    _AirAnimationMode.waves => 'Waves',
+  };
+}
+
+String _airOverlayLabel(_AirOverlayType overlay) {
+  return switch (overlay) {
+    _AirOverlayType.wind => 'Wind',
+    _AirOverlayType.temperature => 'Temperature',
+    _AirOverlayType.relativeHumidity => 'Relative Humidity',
+    _AirOverlayType.dewPointTemperature => 'Dew Point Temperature',
+    _AirOverlayType.wetBulbTemperature => 'Wet Bulb Temperature',
+    _AirOverlayType.precipitation3h => '3-Hour Precipitation Accumulation',
+    _AirOverlayType.capeSurface =>
+      'Convective Available Potential Energy From the Surface',
+    _AirOverlayType.totalPrecipitableWater => 'Total Precipitable Water',
+    _AirOverlayType.totalCloudWater => 'Total Cloud Water',
+    _AirOverlayType.meanSeaLevelPressure => 'Mean Sea Level Pressure',
+    _AirOverlayType.miseryIndex => 'Misery Index',
+    _AirOverlayType.ultravioletIndex => 'Ultraviolet Index',
+    _AirOverlayType.instantaneousWindPowerDensity =>
+      'Instantaneous Wind Power Density',
+    _AirOverlayType.none => 'None',
+  };
+}
+
+String? _airOverlayApiValue(_AirOverlayType overlay) {
+  return switch (overlay) {
+    _AirOverlayType.wind => 'wind',
+    _AirOverlayType.temperature => 'temperature',
+    _AirOverlayType.relativeHumidity => 'relativeHumidity',
+    _AirOverlayType.dewPointTemperature => 'dewPointTemperature',
+    _AirOverlayType.wetBulbTemperature => 'wetBulbTemperature',
+    _AirOverlayType.precipitation3h => 'precipitation3h',
+    _AirOverlayType.capeSurface => 'capeSurface',
+    _AirOverlayType.totalPrecipitableWater => 'totalPrecipitableWater',
+    _AirOverlayType.totalCloudWater => 'totalCloudWater',
+    _AirOverlayType.meanSeaLevelPressure => 'meanSeaLevelPressure',
+    _AirOverlayType.miseryIndex => 'miseryIndex',
+    _AirOverlayType.ultravioletIndex => 'ultravioletIndex',
+    _AirOverlayType.instantaneousWindPowerDensity =>
+      'instantaneousWindPowerDensity',
+    _AirOverlayType.none => null,
+  };
+}
+
+String _weatherLevelLabel(String level) {
+  return level == 'surface' ? 'Surface' : '$level hPa';
+}
+
+bool _isCelsiusWeatherUnit(String unitLabel) {
+  return unitLabel.trim().toLowerCase() == 'c';
+}
+
+double _celsiusToFahrenheit(double valueC) {
+  return (valueC * 9 / 5) + 32;
+}
+
+String _weatherUnitLabelForDisplay(
+  String unitLabel, {
+  bool includeFahrenheitForCelsius = false,
+}) {
+  if (_isCelsiusWeatherUnit(unitLabel)) {
+    return includeFahrenheitForCelsius ? '°C / °F' : '°C';
+  }
+  return unitLabel;
+}
+
+String _weatherValueForDisplay(
+  double value,
+  String unitLabel, {
+  bool includeFahrenheitForCelsius = false,
+}) {
+  if (_isCelsiusWeatherUnit(unitLabel)) {
+    final celsiusText = '${value.toStringAsFixed(1)}°C';
+    if (!includeFahrenheitForCelsius) {
+      return celsiusText;
+    }
+    return '$celsiusText / ${_celsiusToFahrenheit(value).toStringAsFixed(1)}°F';
+  }
+  final trimmedUnit = unitLabel.trim();
+  return trimmedUnit.isEmpty
+      ? value.toStringAsFixed(1)
+      : '${value.toStringAsFixed(1)} $trimmedUnit';
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -189,7 +307,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showStars = false;
   bool _showConstellations = false;
   bool _showConstellationsFullSky = false;
-  bool _showWind = false;
+  bool _weatherOverlayEnabled = false;
+  _WeatherMode _weatherMode = _WeatherMode.air;
+  _AirAnimationMode _airAnimationMode = _AirAnimationMode.wind;
+  _AirOverlayType _airOverlayType = _AirOverlayType.none;
   String _windLevel = 'surface';
   final Map<String, bool> _planetVisibility = <String, bool>{
     for (final planetName in _astronomyPlanetNames) planetName: false,
@@ -204,6 +325,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _astronomyError;
   String? _astronomyEventError;
   String? _windError;
+  String? _weatherOverlayError;
   _BackendStatus _backendStatus = _BackendStatus.checking;
   _DistanceUnitDisplay _distanceUnitDisplay = _DistanceUnitDisplay.both;
   int _stopCount = 2;
@@ -226,6 +348,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Rect? _visibleMapBounds;
   AstronomySnapshot? _astronomySnapshot;
   WindSnapshot? _windSnapshot;
+  WeatherOverlaySnapshot? _weatherOverlaySnapshot;
   List<AstronomyEvent> _astronomyEvents = const [];
   _AstronomyEventFilter _astronomyEventFilter = _AstronomyEventFilter.all;
   String _astronomyEclipseSubtype = 'all';
@@ -240,7 +363,9 @@ class _HomeScreenState extends State<HomeScreen> {
   _AstronomyPlaybackSpeed _astronomyPlaybackSpeed =
       _AstronomyPlaybackSpeed.normal;
   bool _isLoadingWind = false;
+  bool _isLoadingWeatherOverlay = false;
   int _windRequestSequence = 0;
+  int _weatherOverlayRequestSequence = 0;
   List<PlaceMarker?> _routePoints = List<PlaceMarker?>.filled(
     _maxRouteStops,
     null,
@@ -557,7 +682,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _labels = _mergeLabels(scene.labels, _dynamicCityLabels);
     });
     _scheduleDynamicCityLabelRefresh();
-    if (_shouldShowTimedOverlays && !_isLoadingAstronomy && !_isLoadingWind) {
+    if (_shouldShowTimedOverlays &&
+        !_isLoadingAstronomy &&
+        !_isLoadingWind &&
+        !_isLoadingWeatherOverlay) {
       _refreshTimedOverlays();
     }
     if (_astronomyEvents.isEmpty && !_isLoadingAstronomyEvents) {
@@ -776,7 +904,25 @@ class _HomeScreenState extends State<HomeScreen> {
       _showConstellations ||
       _showAnyPlanets;
 
-  bool get _shouldShowTimedOverlays => _shouldShowAstronomy || _showWind;
+  bool get _showAirWeatherPreview =>
+      _weatherOverlayEnabled && _weatherMode == _WeatherMode.air;
+
+  bool get _showWindAnimation => _showAirWeatherPreview;
+
+  bool get _showScalarWeatherOverlay =>
+      _weatherOverlayEnabled && _airOverlayType != _AirOverlayType.none;
+
+  bool get _showWindScalarOverlay =>
+      _showScalarWeatherOverlay && _airOverlayType == _AirOverlayType.wind;
+
+  bool get _shouldLoadWindSnapshot => _showAirWeatherPreview;
+
+  bool get _shouldLoadWeatherOverlaySnapshot => _showScalarWeatherOverlay;
+
+  bool get _shouldShowTimedOverlays =>
+      _shouldShowAstronomy ||
+      _shouldLoadWindSnapshot ||
+      _shouldLoadWeatherOverlaySnapshot;
 
   Map<String, dynamic> _astronomyVisibilityProperties() {
     final visiblePlanets = _visiblePlanetNames;
@@ -792,7 +938,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _finalizeAstronomyVisibilityChange(bool wasShowingAstronomy) {
-    final wasShowingTimedOverlays = wasShowingAstronomy || _showWind;
+    final wasShowingTimedOverlays =
+        wasShowingAstronomy || _shouldLoadWindSnapshot;
     if (!_shouldShowTimedOverlays) {
       _stopAstronomyPlayback();
     }
@@ -809,7 +956,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'timed_overlay_enabled',
         properties: <String, dynamic>{
           'astronomy': _shouldShowAstronomy,
-          'wind': _showWind,
+          'wind': _shouldLoadWindSnapshot,
         },
       );
     }
@@ -1035,7 +1182,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_backendStatus == _BackendStatus.offline || !_shouldShowTimedOverlays) {
       setState(() {
         _astronomyError =
-            'Enable a timed overlay like astronomy or wind and keep the backend online to use playback.';
+            'Enable astronomy, a weather overlay, or Air mode weather animation and keep the backend online to use playback.';
       });
       return;
     }
@@ -1055,7 +1202,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _astronomyPlaybackTimer = Timer.periodic(
       _astronomyPlaybackTick,
       (_) async {
-        if (!mounted || _isLoadingAstronomy || _isLoadingWind) {
+        if (!mounted ||
+            _isLoadingAstronomy ||
+            _isLoadingWind ||
+            _isLoadingWeatherOverlay) {
           return;
         }
         final startUtc = _astronomyPlaybackStart.toUtc();
@@ -1102,9 +1252,17 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-    if (_showWind) {
+    if (_shouldLoadWindSnapshot) {
       tasks.add(
         _loadWind(
+          quiet: quiet,
+          timestampUtcOverride: timestampUtcOverride,
+        ),
+      );
+    }
+    if (_shouldLoadWeatherOverlaySnapshot) {
+      tasks.add(
+        _loadWeatherOverlay(
           quiet: quiet,
           timestampUtcOverride: timestampUtcOverride,
         ),
@@ -1256,7 +1414,7 @@ class _HomeScreenState extends State<HomeScreen> {
     bool quiet = false,
     DateTime? timestampUtcOverride,
   }) async {
-    if (!_showWind) {
+    if (!_shouldLoadWindSnapshot) {
       if (!mounted) {
         return;
       }
@@ -1281,7 +1439,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final effectiveTimestampUtc =
         (timestampUtcOverride ?? _astronomyTimestampUtc()).toUtc();
 
-    if (!quiet && mounted) {
+    if (quiet) {
+      _isLoadingWind = true;
+    } else if (mounted) {
       setState(() {
         _isLoadingWind = true;
         _windError = null;
@@ -1311,10 +1471,105 @@ class _HomeScreenState extends State<HomeScreen> {
         _stopAstronomyPlayback();
       }
     } finally {
-      if (!quiet && mounted) {
+      if (quiet) {
+        if (requestSequence == _windRequestSequence) {
+          _isLoadingWind = false;
+        }
+      } else if (mounted) {
         if (requestSequence == _windRequestSequence) {
           setState(() {
             _isLoadingWind = false;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> _loadWeatherOverlay({
+    bool quiet = false,
+    DateTime? timestampUtcOverride,
+  }) async {
+    if (!_shouldLoadWeatherOverlaySnapshot) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+        _isLoadingWeatherOverlay = false;
+      });
+      return;
+    }
+    if (_backendStatus == _BackendStatus.offline) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherOverlayError =
+            'Backend must be online to load the weather overlay.';
+      });
+      return;
+    }
+
+    final overlay = _airOverlayApiValue(_airOverlayType);
+    if (overlay == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+        _isLoadingWeatherOverlay = false;
+      });
+      return;
+    }
+
+    final requestSequence = ++_weatherOverlayRequestSequence;
+    final effectiveTimestampUtc =
+        (timestampUtcOverride ?? _astronomyTimestampUtc()).toUtc();
+
+    if (quiet) {
+      _isLoadingWeatherOverlay = true;
+    } else if (mounted) {
+      setState(() {
+        _isLoadingWeatherOverlay = true;
+        _weatherOverlayError = null;
+      });
+    }
+
+    try {
+      final snapshot = await _api.loadWeatherOverlaySnapshot(
+        overlay: overlay,
+        timestampUtc: effectiveTimestampUtc,
+        level: _windLevel,
+      );
+      if (!mounted || requestSequence != _weatherOverlayRequestSequence) {
+        return;
+      }
+      setState(() {
+        _weatherOverlaySnapshot = snapshot;
+        _weatherOverlayError = null;
+      });
+    } catch (_) {
+      if (!mounted || requestSequence != _weatherOverlayRequestSequence) {
+        return;
+      }
+      setState(() {
+        _weatherOverlayError =
+            'Could not load the ${_airOverlayLabel(_airOverlayType).toLowerCase()} overlay from the backend.';
+      });
+      if (_isAstronomyPlaying) {
+        _stopAstronomyPlayback();
+      }
+    } finally {
+      if (quiet) {
+        if (requestSequence == _weatherOverlayRequestSequence) {
+          _isLoadingWeatherOverlay = false;
+        }
+      } else if (mounted) {
+        if (requestSequence == _weatherOverlayRequestSequence) {
+          setState(() {
+            _isLoadingWeatherOverlay = false;
           });
         }
       }
@@ -1353,17 +1608,46 @@ class _HomeScreenState extends State<HomeScreen> {
     _finalizeAstronomyVisibilityChange(wasShowingAstronomy);
   }
 
-  void _setWindVisible(bool isVisible) {
-    if (_showWind == isVisible) {
+  void _setWeatherMode(_WeatherMode? mode) {
+    if (mode == null || _weatherMode == mode) {
       return;
     }
 
     final wasShowingTimedOverlays = _shouldShowTimedOverlays;
     setState(() {
-      _showWind = isVisible;
-      if (!_showWind) {
+      _weatherMode = mode;
+      if (!_shouldLoadWindSnapshot) {
         _windSnapshot = null;
         _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else if (wasShowingTimedOverlays) {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setWeatherOverlayEnabled(bool isEnabled) {
+    if (_weatherOverlayEnabled == isEnabled) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _weatherOverlayEnabled = isEnabled;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
       }
     });
     if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
@@ -1371,14 +1655,96 @@ class _HomeScreenState extends State<HomeScreen> {
         'timed_overlay_enabled',
         properties: <String, dynamic>{
           'astronomy': _shouldShowAstronomy,
-          'wind': _showWind,
+          'wind': _shouldLoadWindSnapshot,
         },
       );
     }
     _trackEvent(
-      'wind_overlay_toggle',
+      'weather_overlay_toggle',
       properties: <String, dynamic>{
-        'enabled': isVisible,
+        'enabled': isEnabled,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setAirAnimationMode(_AirAnimationMode? mode) {
+    if (mode == null || _airAnimationMode == mode) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _airAnimationMode = mode;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'air_animation_changed',
+      properties: <String, dynamic>{
+        'animate': _airAnimationLabel(mode).toLowerCase(),
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setAirOverlayType(_AirOverlayType? overlay) {
+    if (overlay == null || _airOverlayType == overlay) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _airOverlayType = overlay;
+      _weatherOverlaySnapshot = null;
+      _weatherOverlayError = null;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'air_overlay_changed',
+      properties: <String, dynamic>{
+        'overlay': _airOverlayType.name,
       },
     );
     _syncAstronomyTimer();
@@ -1396,6 +1762,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _windLevel = level;
+      if (_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
     });
     _trackEvent(
       'wind_level_changed',
@@ -1403,8 +1773,16 @@ class _HomeScreenState extends State<HomeScreen> {
         'level': level,
       },
     );
-    if (_showWind) {
+    if (_shouldLoadWindSnapshot) {
       _loadWind();
+    }
+    if (_shouldLoadWeatherOverlaySnapshot) {
+      _loadWeatherOverlay();
+    } else {
+      setState(() {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      });
     }
   }
 
@@ -2037,7 +2415,11 @@ class _HomeScreenState extends State<HomeScreen> {
         final hudInset = isCompactScreen ? 10.0 : 20.0;
         final overlayNotice = _pickStopIndex != null
             ? 'Tap the map to place stop ${_pickStopIndex! + 1}.'
-            : _error ?? _measureError ?? _astronomyError ?? _windError;
+            : _error ??
+                _measureError ??
+                _astronomyError ??
+                _windError ??
+                _weatherOverlayError;
         final overlayNoticeIsWarning =
             _pickStopIndex == null && overlayNotice != null;
         final showBottomNotice = !isCompactScreen || overlayNotice != null;
@@ -2056,7 +2438,10 @@ class _HomeScreenState extends State<HomeScreen> {
           showStars: _showStars,
           showConstellations: _showConstellations,
           showConstellationsFullSky: _showConstellationsFullSky,
-          showWind: _showWind,
+          weatherOverlayEnabled: _weatherOverlayEnabled,
+          weatherMode: _weatherMode,
+          airAnimationMode: _airAnimationMode,
+          airOverlayType: _airOverlayType,
           windLevel: _windLevel,
           allPlanetsVisible: _allPlanetsVisible,
           planetVisibility: _planetVisibility,
@@ -2066,11 +2451,13 @@ class _HomeScreenState extends State<HomeScreen> {
           isLoading: _isLoading,
           isLoadingAstronomy: _isLoadingAstronomy,
           isLoadingWind: _isLoadingWind,
+          isLoadingWeatherOverlay: _isLoadingWeatherOverlay,
           isMeasuring: _isMeasuring,
           error: _error,
           measureError: _measureError,
           astronomyError: _astronomyError,
           windError: _windError,
+          weatherOverlayError: _weatherOverlayError,
           backendStatus: _backendStatus,
           detailLevel: _detailLevel,
           shapeSource: _shapeSource,
@@ -2083,6 +2470,7 @@ class _HomeScreenState extends State<HomeScreen> {
           usingRealTimezones: _usingRealTimezones,
           astronomySnapshot: _astronomySnapshot,
           windSnapshot: _windSnapshot,
+          weatherOverlaySnapshot: _weatherOverlaySnapshot,
           windAltitudeExplanation: _windAltitudeExplanation(
             _windSnapshot?.level ?? _windLevel,
           ),
@@ -2099,6 +2487,11 @@ class _HomeScreenState extends State<HomeScreen> {
           astronomyCustomTimeLabel: _formatAstronomyTimeLabel(
             _astronomyCustomTime.toUtc(),
           ),
+          weatherOverlaySnapshotTimeLabel: _weatherOverlaySnapshot == null
+              ? null
+              : _formatAstronomyTimeLabel(
+                  _weatherOverlaySnapshot!.timestampUtc,
+                ),
           windSnapshotTimeLabel: _windSnapshot == null
               ? null
               : _formatAstronomyTimeLabel(_windSnapshot!.timestampUtc),
@@ -2181,7 +2574,10 @@ class _HomeScreenState extends State<HomeScreen> {
           onShowConstellationsFullSkyChanged: (value) => _setAstronomyToggle(
             showConstellationsFullSky: value,
           ),
-          onShowWindChanged: _setWindVisible,
+          onWeatherOverlayEnabledChanged: _setWeatherOverlayEnabled,
+          onWeatherModeChanged: _setWeatherMode,
+          onAirAnimationModeChanged: _setAirAnimationMode,
+          onAirOverlayTypeChanged: _setAirOverlayType,
           onWindLevelChanged: _setWindLevel,
           onShowAllPlanetsChanged: _setAllPlanetsVisibility,
           onShowPlanetChanged: _setPlanetVisibility,
@@ -2310,7 +2706,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         showConstellations: _showConstellations,
                         showConstellationsFullSky: _showConstellationsFullSky,
                         windSnapshot: _windSnapshot,
-                        showWind: _showWind,
+                        showWindAnimation: _showWindAnimation,
+                        showWindOverlay: _showWindScalarOverlay &&
+                            _weatherOverlaySnapshot == null,
+                        weatherOverlaySnapshot: _weatherOverlaySnapshot,
+                        showWeatherOverlay: _showScalarWeatherOverlay,
                         animateWind: _isAstronomyPlaying,
                         visiblePlanetNames: _visiblePlanetNames,
                         astronomyObserverName: _astronomyObserver?.displayName,
@@ -2544,7 +2944,10 @@ class _IntroPanel extends StatelessWidget {
     required this.showStars,
     required this.showConstellations,
     required this.showConstellationsFullSky,
-    required this.showWind,
+    required this.weatherOverlayEnabled,
+    required this.weatherMode,
+    required this.airAnimationMode,
+    required this.airOverlayType,
     required this.windLevel,
     required this.allPlanetsVisible,
     required this.planetVisibility,
@@ -2554,11 +2957,13 @@ class _IntroPanel extends StatelessWidget {
     required this.isLoading,
     required this.isLoadingAstronomy,
     required this.isLoadingWind,
+    required this.isLoadingWeatherOverlay,
     required this.isMeasuring,
     required this.error,
     required this.measureError,
     required this.astronomyError,
     required this.windError,
+    required this.weatherOverlayError,
     required this.backendStatus,
     required this.detailLevel,
     required this.shapeSource,
@@ -2571,6 +2976,7 @@ class _IntroPanel extends StatelessWidget {
     required this.usingRealTimezones,
     required this.astronomySnapshot,
     required this.windSnapshot,
+    required this.weatherOverlaySnapshot,
     required this.windAltitudeExplanation,
     required this.astronomyEvents,
     required this.selectedAstronomyEvent,
@@ -2583,6 +2989,7 @@ class _IntroPanel extends StatelessWidget {
     required this.astronomyEventScrollController,
     required this.astronomyObserverName,
     required this.astronomyCustomTimeLabel,
+    required this.weatherOverlaySnapshotTimeLabel,
     required this.windSnapshotTimeLabel,
     required this.astronomyPlaybackStartLabel,
     required this.astronomyPlaybackEndLabel,
@@ -2614,7 +3021,10 @@ class _IntroPanel extends StatelessWidget {
     required this.onShowStarsChanged,
     required this.onShowConstellationsChanged,
     required this.onShowConstellationsFullSkyChanged,
-    required this.onShowWindChanged,
+    required this.onWeatherOverlayEnabledChanged,
+    required this.onWeatherModeChanged,
+    required this.onAirAnimationModeChanged,
+    required this.onAirOverlayTypeChanged,
     required this.onWindLevelChanged,
     required this.onShowAllPlanetsChanged,
     required this.onShowPlanetChanged,
@@ -2657,7 +3067,10 @@ class _IntroPanel extends StatelessWidget {
   final bool showStars;
   final bool showConstellations;
   final bool showConstellationsFullSky;
-  final bool showWind;
+  final bool weatherOverlayEnabled;
+  final _WeatherMode weatherMode;
+  final _AirAnimationMode airAnimationMode;
+  final _AirOverlayType airOverlayType;
   final String windLevel;
   final bool allPlanetsVisible;
   final Map<String, bool> planetVisibility;
@@ -2667,11 +3080,13 @@ class _IntroPanel extends StatelessWidget {
   final bool isLoading;
   final bool isLoadingAstronomy;
   final bool isLoadingWind;
+  final bool isLoadingWeatherOverlay;
   final bool isMeasuring;
   final String? error;
   final String? measureError;
   final String? astronomyError;
   final String? windError;
+  final String? weatherOverlayError;
   final _BackendStatus backendStatus;
   final String detailLevel;
   final String shapeSource;
@@ -2684,6 +3099,7 @@ class _IntroPanel extends StatelessWidget {
   final bool usingRealTimezones;
   final AstronomySnapshot? astronomySnapshot;
   final WindSnapshot? windSnapshot;
+  final WeatherOverlaySnapshot? weatherOverlaySnapshot;
   final String windAltitudeExplanation;
   final List<AstronomyEvent> astronomyEvents;
   final AstronomyEvent? selectedAstronomyEvent;
@@ -2696,6 +3112,7 @@ class _IntroPanel extends StatelessWidget {
   final ScrollController astronomyEventScrollController;
   final String? astronomyObserverName;
   final String astronomyCustomTimeLabel;
+  final String? weatherOverlaySnapshotTimeLabel;
   final String? windSnapshotTimeLabel;
   final String astronomyPlaybackStartLabel;
   final String astronomyPlaybackEndLabel;
@@ -2727,7 +3144,10 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<bool> onShowStarsChanged;
   final ValueChanged<bool> onShowConstellationsChanged;
   final ValueChanged<bool> onShowConstellationsFullSkyChanged;
-  final ValueChanged<bool> onShowWindChanged;
+  final ValueChanged<bool> onWeatherOverlayEnabledChanged;
+  final ValueChanged<_WeatherMode?> onWeatherModeChanged;
+  final ValueChanged<_AirAnimationMode?> onAirAnimationModeChanged;
+  final ValueChanged<_AirOverlayType?> onAirOverlayTypeChanged;
   final ValueChanged<String?> onWindLevelChanged;
   final ValueChanged<bool> onShowAllPlanetsChanged;
   final void Function(String planetName, bool isVisible) onShowPlanetChanged;
@@ -2905,24 +3325,72 @@ class _IntroPanel extends StatelessWidget {
               const SizedBox(height: 18),
               _CollapsiblePanel(
                 title: 'Weather Overlay',
-                subtitle: 'Preview surface wind field with shared map time',
+                subtitle:
+                    'Weather starts off and can be enabled when you want a map overlay',
                 initiallyExpanded: false,
                 children: [
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    value: showWind,
-                    title: const Text('Wind overlay'),
+                    value: weatherOverlayEnabled,
+                    title: const Text('Enable weather overlay'),
                     subtitle: const Text(
-                      'Shows a color-scaled global wind field that follows the shared map time.',
+                      'Starts off by default. Turn this on before loading wind-driven weather layers.',
                     ),
-                    onChanged: onShowWindChanged,
+                    onChanged: onWeatherOverlayEnabledChanged,
                   ),
+                  const SizedBox(height: 12),
                   _SelectionField(
-                    labelText: 'Wind level',
+                    labelText: 'Mode',
+                    valueText: _weatherModeLabel(weatherMode),
+                    currentValue: weatherMode,
+                    onChanged: onWeatherModeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _WeatherMode.none,
+                        label: 'None',
+                        subtitle:
+                            'Disable animation and keep overlay-only weather.',
+                      ),
+                      _ChoiceItem(
+                        value: _WeatherMode.air,
+                        label: 'Air',
+                        subtitle: 'Use the wind animation preview layer.',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'Animate',
+                    valueText: _airAnimationLabel(airAnimationMode),
+                    currentValue: airAnimationMode,
+                    enabled: weatherOverlayEnabled &&
+                        weatherMode == _WeatherMode.air,
+                    onChanged: onAirAnimationModeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _AirAnimationMode.wind,
+                        label: 'Wind',
+                        subtitle: 'Available now.',
+                      ),
+                      _ChoiceItem(
+                        value: _AirAnimationMode.currents,
+                        label: 'Currents',
+                        subtitle: 'Coming soon.',
+                      ),
+                      _ChoiceItem(
+                        value: _AirAnimationMode.waves,
+                        label: 'Waves',
+                        subtitle: 'Coming soon.',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'Height',
                     valueText:
                         windLevel == 'surface' ? 'Surface' : '$windLevel hPa',
                     currentValue: windLevel,
-                    enabled: showWind,
+                    enabled: weatherOverlayEnabled,
                     onChanged: onWindLevelChanged,
                     options: [
                       for (final level in _windLevelOptions)
@@ -2932,26 +3400,93 @@ class _IntroPanel extends StatelessWidget {
                         ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  _SelectionField(
+                    labelText: 'Overlay',
+                    valueText: _airOverlayLabel(airOverlayType),
+                    currentValue: airOverlayType,
+                    enabled: weatherOverlayEnabled,
+                    onChanged: onAirOverlayTypeChanged,
+                    options: const [
+                      _ChoiceItem(
+                        value: _AirOverlayType.wind,
+                        label: 'Wind',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.temperature,
+                        label: 'Temperature',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.relativeHumidity,
+                        label: 'Relative Humidity',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.dewPointTemperature,
+                        label: 'Dew Point Temperature',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.wetBulbTemperature,
+                        label: 'Wet Bulb Temperature',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.precipitation3h,
+                        label: '3-Hour Precipitation Accumulation',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.capeSurface,
+                        label:
+                            'Convective Available Potential Energy From the Surface',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.totalPrecipitableWater,
+                        label: 'Total Precipitable Water',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.totalCloudWater,
+                        label: 'Total Cloud Water',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.meanSeaLevelPressure,
+                        label: 'Mean Sea Level Pressure',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.miseryIndex,
+                        label: 'Misery Index',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.ultravioletIndex,
+                        label: 'Ultraviolet Index',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.instantaneousWindPowerDensity,
+                        label: 'Instantaneous Wind Power Density',
+                      ),
+                      _ChoiceItem(
+                        value: _AirOverlayType.none,
+                        label: 'None',
+                        subtitle: 'Hide scalar coloring.',
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'This first pass uses a backend preview wind field so the full UI and playback flow are in place before NOAA/GFS ingest is added.',
-                    style: TextStyle(
+                  Text(
+                    !weatherOverlayEnabled
+                        ? 'Weather is turned off by default. Turn it on to animate wind or color the map by any selected weather scale.'
+                        : weatherMode == _WeatherMode.none &&
+                                airOverlayType == _AirOverlayType.none
+                            ? 'Weather is enabled, but both animation and scalar coloring are off.'
+                            : weatherMode == _WeatherMode.none
+                                ? '${_airOverlayLabel(airOverlayType)} colors the map by scale without any wind animation.'
+                                : airOverlayType == _AirOverlayType.none
+                                    ? 'Wind animation stays on as the live weather preview. Overlay coloring is hidden while None is selected.'
+                                    : '${_airOverlayLabel(airOverlayType)} now uses a backend scalar field to color the map by scale while wind continues to drive the animation preview.',
+                    style: const TextStyle(
                       fontSize: 13,
                       color: Color(0xFF335C67),
                       height: 1.35,
                     ),
                   ),
-                  if (isLoadingWind) ...[
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Loading wind overlay...',
-                      style: TextStyle(
-                        color: Color(0xFF335C67),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                  if (windError != null) ...[
+                  if (windError != null && weatherOverlayEnabled) ...[
                     const SizedBox(height: 10),
                     Text(
                       windError!,
@@ -2962,7 +3497,20 @@ class _IntroPanel extends StatelessWidget {
                       ),
                     ),
                   ],
-                  if (windSnapshot != null) ...[
+                  if (weatherOverlayError != null && weatherOverlayEnabled) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      weatherOverlayError!,
+                      style: const TextStyle(
+                        color: Color(0xFF7A4A17),
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                  if ((windSnapshot != null ||
+                          weatherOverlaySnapshot != null) &&
+                      weatherOverlayEnabled) ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
@@ -2975,7 +3523,7 @@ class _IntroPanel extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Snapshot: ${windSnapshotTimeLabel ?? windSnapshot!.timestampUtc.toIso8601String()}',
+                            'Snapshot: ${weatherOverlaySnapshotTimeLabel ?? windSnapshotTimeLabel ?? weatherOverlaySnapshot?.timestampUtc.toIso8601String() ?? windSnapshot?.timestampUtc.toIso8601String() ?? ''}',
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               color: Color(0xFF112A46),
@@ -2983,40 +3531,87 @@ class _IntroPanel extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Layer: ${windSnapshot!.level == 'surface' ? 'Surface' : '${windSnapshot!.level} hPa'} wind, every ${windSnapshot!.gridStepDegrees} degrees.',
+                            'Animation: ${weatherMode == _WeatherMode.air ? 'Wind preview' : 'None'} | Overlay: ${_airOverlayLabel(airOverlayType)}',
                             style: const TextStyle(
                               fontSize: 13,
                               color: Color(0xFF335C67),
                               height: 1.35,
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Speed range: ${windSnapshot!.minSpeedMps.toStringAsFixed(1)} to ${windSnapshot!.maxSpeedMps.toStringAsFixed(1)} m/s.',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF335C67),
-                              height: 1.35,
+                          if (weatherOverlaySnapshot != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Color scale: ${weatherOverlaySnapshot!.overlayLabel} (${_weatherUnitLabelForDisplay(weatherOverlaySnapshot!.unitLabel, includeFahrenheitForCelsius: true)}), ${_weatherLevelLabel(weatherOverlaySnapshot!.level)}, every ${weatherOverlaySnapshot!.gridStepDegrees} degrees.',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            windAltitudeExplanation,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF335C67),
-                              height: 1.35,
+                            const SizedBox(height: 6),
+                            Text(
+                              'Range: ${_weatherValueForDisplay(weatherOverlaySnapshot!.minValue, weatherOverlaySnapshot!.unitLabel, includeFahrenheitForCelsius: true)} to ${_weatherValueForDisplay(weatherOverlaySnapshot!.maxValue, weatherOverlaySnapshot!.unitLabel, includeFahrenheitForCelsius: true)}.',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Source: ${windSnapshot!.source}',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF335C67),
-                              height: 1.35,
+                          ],
+                          if (windSnapshot != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Wind layer: ${_weatherLevelLabel(windSnapshot!.level)} flow, every ${windSnapshot!.gridStepDegrees} degrees.',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Wind speed range: ${windSnapshot!.minSpeedMps.toStringAsFixed(1)} to ${windSnapshot!.maxSpeedMps.toStringAsFixed(1)} m/s.',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              windAltitudeExplanation,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                          if (weatherOverlaySnapshot != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Overlay source: ${weatherOverlaySnapshot!.source}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                          if (windSnapshot != null &&
+                              (weatherOverlaySnapshot == null ||
+                                  windSnapshot!.source !=
+                                      weatherOverlaySnapshot!.source)) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Wind source: ${windSnapshot!.source}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Color(0xFF335C67),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -3024,7 +3619,7 @@ class _IntroPanel extends StatelessWidget {
                   const SizedBox(height: 14),
                   _SharedTimePlaybackSection(
                     title: 'Shared Map Time',
-                    enabled: showWind,
+                    enabled: weatherOverlayEnabled,
                     astronomyTimeMode: astronomyTimeMode,
                     astronomyDisplayTimeZone: astronomyDisplayTimeZone,
                     astronomyDisplayTimeZoneOptions:
@@ -3197,16 +3792,6 @@ class _IntroPanel extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (isLoadingAstronomy) ...[
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Loading live astronomy...',
-                      style: TextStyle(
-                        color: Color(0xFF335C67),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
                   if (astronomySnapshot != null) ...[
                     const SizedBox(height: 12),
                     Container(
