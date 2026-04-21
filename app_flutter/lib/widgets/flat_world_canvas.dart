@@ -904,6 +904,7 @@ class FlatWorldCanvas extends StatefulWidget {
     required this.windSnapshot,
     required this.showWindAnimation,
     required this.showWindOverlay,
+    required this.weatherAnimationLabel,
     required this.weatherOverlaySnapshot,
     required this.showWeatherOverlay,
     required this.animateWind,
@@ -938,6 +939,7 @@ class FlatWorldCanvas extends StatefulWidget {
   final WindSnapshot? windSnapshot;
   final bool showWindAnimation;
   final bool showWindOverlay;
+  final String weatherAnimationLabel;
   final WeatherOverlaySnapshot? weatherOverlaySnapshot;
   final bool showWeatherOverlay;
   final bool animateWind;
@@ -1225,6 +1227,8 @@ class _FlatWorldCanvasState extends State<FlatWorldCanvas>
                                     windSnapshot: widget.windSnapshot,
                                     showWindAnimation: widget.showWindAnimation,
                                     showWindOverlay: widget.showWindOverlay,
+                                    weatherAnimationLabel:
+                                        widget.weatherAnimationLabel,
                                     weatherOverlaySnapshot:
                                         widget.weatherOverlaySnapshot,
                                     showWeatherOverlay:
@@ -2618,6 +2622,7 @@ class _FlatWorldPainter extends CustomPainter {
     required this.windSnapshot,
     required this.showWindAnimation,
     required this.showWindOverlay,
+    required this.weatherAnimationLabel,
     required this.weatherOverlaySnapshot,
     required this.showWeatherOverlay,
     required this.animateWind,
@@ -2659,6 +2664,7 @@ class _FlatWorldPainter extends CustomPainter {
   final WindSnapshot? windSnapshot;
   final bool showWindAnimation;
   final bool showWindOverlay;
+  final String weatherAnimationLabel;
   final WeatherOverlaySnapshot? weatherOverlaySnapshot;
   final bool showWeatherOverlay;
   final bool animateWind;
@@ -4376,7 +4382,7 @@ class _FlatWorldPainter extends CustomPainter {
       includeFahrenheitForCelsius: true,
       multilineForFahrenheit: _isCelsiusWeatherUnit(overlaySnapshot.unitLabel),
     );
-    final animateTitleText = 'Animate: Wind speed (m/s)';
+    final animateTitleText = 'Animate: $weatherAnimationLabel speed (m/s)';
     final animateSubtitleText =
         wind.level == 'surface' ? 'Surface' : '${wind.level} hPa';
 
@@ -4515,8 +4521,11 @@ class _FlatWorldPainter extends CustomPainter {
         14 +
         gapAfterBar +
         math.max(animateMinPainter.height, animateMaxPainter.height);
-    final legendHeight =
-        topPadding + overlaySectionHeight + sectionGap + animateSectionHeight + bottomPadding;
+    final legendHeight = topPadding +
+        overlaySectionHeight +
+        sectionGap +
+        animateSectionHeight +
+        bottomPadding;
     final halfWidth = legendWidth / 2;
     final contentLeft = -(halfWidth - horizontalPadding);
     final contentRight = halfWidth - horizontalPadding;
@@ -4707,8 +4716,8 @@ class _FlatWorldPainter extends CustomPainter {
     );
 
     final titlePainter = TextPainter(
-      text: const TextSpan(
-        text: 'Wind speed (m/s)',
+      text: TextSpan(
+        text: '$weatherAnimationLabel speed (m/s)',
         style: TextStyle(
           color: Color(0xFF112A46),
           fontSize: 12,
@@ -6181,6 +6190,7 @@ class _FlatWorldPainter extends CustomPainter {
         oldDelegate.windSnapshot != windSnapshot ||
         oldDelegate.showWindAnimation != showWindAnimation ||
         oldDelegate.showWindOverlay != showWindOverlay ||
+        oldDelegate.weatherAnimationLabel != weatherAnimationLabel ||
         oldDelegate.weatherOverlaySnapshot != weatherOverlaySnapshot ||
         oldDelegate.showWeatherOverlay != showWeatherOverlay ||
         oldDelegate.animateWind != animateWind ||

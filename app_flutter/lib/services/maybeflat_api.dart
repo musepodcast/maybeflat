@@ -383,6 +383,42 @@ class MaybeflatApi {
     );
   }
 
+  Future<WindSnapshot> loadWeatherAnimationSnapshot({
+    required String mode,
+    DateTime? timestampUtc,
+    String level = 'surface',
+    int gridStepDegrees = 15,
+  }) async {
+    final queryParameters = <String, String>{
+      'mode': mode,
+      'level': level,
+      'grid_step_degrees': '$gridStepDegrees',
+    };
+    if (timestampUtc != null) {
+      queryParameters['timestamp_utc'] = timestampUtc.toUtc().toIso8601String();
+    }
+
+    final uri = await _buildUri(
+      '/map/weather/animate',
+      queryParameters: queryParameters,
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to load weather animation snapshot: ${response.statusCode}',
+      );
+    }
+
+    return WindSnapshot.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<WeatherOverlaySnapshot> loadWeatherOverlaySnapshot({
     required String overlay,
     DateTime? timestampUtc,
@@ -411,6 +447,40 @@ class MaybeflatApi {
     if (response.statusCode != 200) {
       throw Exception(
         'Failed to load weather overlay snapshot: ${response.statusCode}',
+      );
+    }
+
+    return WeatherOverlaySnapshot.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<WeatherOverlaySnapshot> loadOceanOverlaySnapshot({
+    required String overlay,
+    DateTime? timestampUtc,
+    int gridStepDegrees = 15,
+  }) async {
+    final queryParameters = <String, String>{
+      'overlay': overlay,
+      'grid_step_degrees': '$gridStepDegrees',
+    };
+    if (timestampUtc != null) {
+      queryParameters['timestamp_utc'] = timestampUtc.toUtc().toIso8601String();
+    }
+
+    final uri = await _buildUri(
+      '/map/ocean/overlay',
+      queryParameters: queryParameters,
+    );
+    final response = await _client
+        .get(
+          uri,
+          headers: await _requestHeaders(),
+        )
+        .timeout(sceneTimeout);
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to load ocean overlay snapshot: ${response.statusCode}',
       );
     }
 

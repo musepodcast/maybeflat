@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TypedDict
 
 from app.schemas.map_models import WindSnapshotResponse, WindVectorResponse
+from app.services.marine_live import get_live_marine_animation_snapshot
 
 
 class _WindLevelProfile(TypedDict):
@@ -23,6 +24,11 @@ class _WindLevelProfile(TypedDict):
     meridional_boost: float
     wave_scale: float
     phase_scale: float
+
+
+class _AnimationModeMetadata(TypedDict):
+    label: str
+    source_label: str
 
 
 _WIND_LEVELS: dict[str, _WindLevelProfile] = {
@@ -164,6 +170,21 @@ _WIND_LEVELS: dict[str, _WindLevelProfile] = {
     },
 }
 
+_ANIMATION_MODES: dict[str, _AnimationModeMetadata] = {
+    "wind": {
+        "label": "Wind",
+        "source_label": "wind field",
+    },
+    "currents": {
+        "label": "Currents",
+        "source_label": "surface current field",
+    },
+    "waves": {
+        "label": "Waves",
+        "source_label": "wave propagation field",
+    },
+}
+
 
 def _parse_timestamp_utc(timestamp_utc: str | None) -> datetime:
     if timestamp_utc is None or not timestamp_utc.strip():
@@ -270,15 +291,112 @@ def _wind_components(
     return (u_mps, v_mps)
 
 
-def get_wind_snapshot(
+def _current_components(
+    timestamp_utc: datetime,
+    latitude: float,
+    longitude: float,
+    profile: _WindLevelProfile,
+) -> tuple[float, float]:
+    latitude_radians = math.radians(latitude)
+    longitude_radians = math.radians(longitude)
+    hours = timestamp_utc.timestamp() / 3600.0
+    phase = hours / (26.0 * profile["phase_scale"])
+
+    subtropical_gyre = max(
+        0.0,
+        1.0 - (abs(abs(latitude) - 28.0) / 22.0),
+    )
+    equatorial_current = max(0.0, 1.0 - (abs(latitude) / 18.0))
+    subpolar_current = max(
+        0.0,
+        1.0 - (abs(abs(latitude) - 56.0) / 16.0),
+    )
+    hemisphere = 1.0 if latitude >= 0 else -1.0
+
+    gyre_phase = longitude_radians - (phase * 0.55)
+    u_mps = 0.0
+    u_mps += 1.8 * subtropical_gyre * math.cos(gyre_phase)
+    u_mps += 0.95 * equatorial_current * math.sin((longitude_radians * 1.2) + phase)
+    u_mps += 0.75 * subpolar_current * math.cos((longitude_radians * 1.35) - (phase * 0.7))
+    u_mps += 0.35 * math.sin((latitude_radians * 3.4) + (longitude_radians * 1.8) + (phase * 0.4))
+
+    v_mps = 0.0
+    v_mps += -1.45 * subtropical_gyre * hemisphere * math.sin(gyre_phase)
+    v_mps += 0.5 * equatorial_current * hemisphere * math.cos((longitude_radians * 0.9) - (phase * 0.65))
+    v_mps += 0.55 * subpolar_current * hemisphere * math.sin((longitude_radians * 1.4) + (phase * 0.8))
+    v_mps += 0.25 * math.cos((latitude_radians * 2.8) - (longitude_radians * 1.3) + (phase * 0.5))
+
+    depth_factor = math.exp(-profile["altitude_km"] / 12.0)
+    return (u_mps * depth_factor, v_mps * depth_factor)
+
+
+def _wave_components(
+    timestamp_utc: datetime,
+    latitude: float,
+    longitude: float,
+    profile: _WindLevelProfile,
+) -> tuple[float, float]:
+    latitude_radians = math.radians(latitude)
+    longitude_radians = math.radians(longitude)
+    hours = timestamp_utc.timestamp() / 3600.0
+    phase = hours / (9.5 * profile["phase_scale"])
+    storm_belt = max(0.0, 1.0 - (abs(abs(latitude) - 42.0) / 20.0))
+    trade_belt = max(0.0, 1.0 - (abs(abs(latitude) - 15.0) / 18.0))
+    polar_swell = max(0.0, 1.0 - (abs(abs(latitude) - 62.0) / 16.0))
+    hemisphere = 1.0 if latitude >= 0 else -1.0
+
+    u_mps = 0.0
+    u_mps += 5.1 * storm_belt * math.cos((longitude_radians * 1.55) - phase)
+    u_mps += -2.8 * trade_belt * math.cos((longitude_radians * 1.1) + (phase * 0.75))
+    u_mps += 1.9 * polar_swell * math.sin((longitude_radians * 1.8) - (phase * 0.55))
+    u_mps += 0.95 * math.cos((latitude_radians * 2.4) + (longitude_radians * 2.3) - (phase * 1.2))
+
+    v_mps = 0.0
+    v_mps += 1.25 * storm_belt * hemisphere * math.sin((longitude_radians * 1.45) - (phase * 0.9))
+    v_mps += 0.85 * trade_belt * hemisphere * math.cos((longitude_radians * 1.35) + (phase * 0.6))
+    v_mps += 0.7 * polar_swell * hemisphere * math.sin((longitude_radians * 2.1) - (phase * 0.45))
+    v_mps += 0.42 * math.sin((latitude_radians * 3.1) - (longitude_radians * 1.7) + phase)
+
+    altitude_factor = 0.8 + (0.2 * math.exp(-profile["altitude_km"] / 20.0))
+    return (u_mps * altitude_factor, v_mps * altitude_factor)
+
+
+def _animation_components(
+    mode: str,
+    timestamp_utc: datetime,
+    latitude: float,
+    longitude: float,
+    profile: _WindLevelProfile,
+) -> tuple[float, float]:
+    if mode == "wind":
+        return _wind_components(timestamp_utc, latitude, longitude, profile)
+    if mode == "currents":
+        return _current_components(timestamp_utc, latitude, longitude, profile)
+    if mode == "waves":
+        return _wave_components(timestamp_utc, latitude, longitude, profile)
+    raise ValueError("Unsupported weather animation mode.")
+
+
+def get_animation_snapshot(
     *,
+    mode: str,
     timestamp_utc: str | None = None,
     level: str = "surface",
     grid_step_degrees: int = 15,
 ) -> WindSnapshotResponse:
+    if mode in {"currents", "waves"}:
+        return get_live_marine_animation_snapshot(
+            mode=mode,
+            timestamp_utc=timestamp_utc,
+            grid_step_degrees=grid_step_degrees,
+        )
+
     profile = _WIND_LEVELS.get(level)
     if profile is None:
         raise ValueError("Unsupported wind level.")
+    metadata = _ANIMATION_MODES.get(mode)
+    if metadata is None:
+        raise ValueError("Unsupported weather animation mode.")
 
     effective_timestamp = _parse_timestamp_utc(timestamp_utc)
     vectors: list[WindVectorResponse] = []
@@ -287,7 +405,8 @@ def get_wind_snapshot(
 
     for latitude in range(-85, 86, grid_step_degrees):
         for longitude in range(-180, 180, grid_step_degrees):
-            u_mps, v_mps = _wind_components(
+            u_mps, v_mps = _animation_components(
+                mode,
                 effective_timestamp,
                 float(latitude),
                 float(longitude),
@@ -311,10 +430,24 @@ def get_wind_snapshot(
 
     return WindSnapshotResponse(
         timestamp_utc=effective_timestamp.isoformat().replace("+00:00", "Z"),
-        source=f"Preview wind field (procedural {profile['label']} model)",
+        source=f"Preview {metadata['source_label']} (procedural {metadata['label'].lower()} model)",
         level=level,
         grid_step_degrees=grid_step_degrees,
         min_speed_mps=round(min_speed, 3),
         max_speed_mps=round(max_speed, 3),
         vectors=vectors,
+    )
+
+
+def get_wind_snapshot(
+    *,
+    timestamp_utc: str | None = None,
+    level: str = "surface",
+    grid_step_degrees: int = 15,
+) -> WindSnapshotResponse:
+    return get_animation_snapshot(
+        mode="wind",
+        timestamp_utc=timestamp_utc,
+        level=level,
+        grid_step_degrees=grid_step_degrees,
     )

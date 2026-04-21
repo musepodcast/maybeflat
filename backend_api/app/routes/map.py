@@ -25,8 +25,12 @@ from app.services.flat_world import (
     transform_point,
 )
 from app.services.tile_renderer import build_tile_manifest, render_tile_png
+from app.services.marine_live import (
+    LiveMarineDataError,
+    get_live_ocean_overlay_snapshot,
+)
 from app.services.weather_overlays import get_weather_overlay_snapshot
-from app.services.weather_wind import get_wind_snapshot
+from app.services.weather_wind import get_animation_snapshot, get_wind_snapshot
 
 
 router = APIRouter(prefix="/map", tags=["map"])
@@ -112,6 +116,29 @@ def get_weather_wind(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/weather/animate", response_model=WindSnapshotResponse)
+def get_weather_animation(
+    mode: str = Query(default="wind", pattern="^(wind|currents|waves)$"),
+    timestamp_utc: str | None = Query(default=None),
+    level: str = Query(
+        default="surface",
+        pattern="^(surface|1000|850|700|500|250|70|10)$",
+    ),
+    grid_step_degrees: int = Query(default=15, ge=5, le=30),
+) -> WindSnapshotResponse:
+    try:
+        return get_animation_snapshot(
+            mode=mode,
+            timestamp_utc=timestamp_utc,
+            level=level,
+            grid_step_degrees=grid_step_degrees,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LiveMarineDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.get("/weather/overlay", response_model=WeatherOverlaySnapshotResponse)
 def get_weather_overlay(
     overlay: str = Query(default="wind"),
@@ -131,6 +158,24 @@ def get_weather_overlay(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/ocean/overlay", response_model=WeatherOverlaySnapshotResponse)
+def get_ocean_overlay(
+    overlay: str = Query(default="currents", pattern="^(currents|waves|htsgw|sst|ssta|baa)$"),
+    timestamp_utc: str | None = Query(default=None),
+    grid_step_degrees: int = Query(default=15, ge=5, le=30),
+) -> WeatherOverlaySnapshotResponse:
+    try:
+        return get_live_ocean_overlay_snapshot(
+            overlay=overlay,
+            timestamp_utc=timestamp_utc,
+            grid_step_degrees=grid_step_degrees,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LiveMarineDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/cities/search", response_model=CitySearchResponse)
