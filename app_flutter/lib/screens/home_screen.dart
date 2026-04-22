@@ -41,9 +41,17 @@ enum _AstronomyPlaybackSpeed { slow, normal, fast, veryFast }
 
 enum _TimeZoneMode { approximate, real }
 
-enum _WeatherMode { air, ocean, none }
+enum _WeatherMode {
+  air,
+  ocean,
+  atmosphericChemistry,
+  particulates,
+  aurora,
+  biology,
+  none,
+}
 
-enum _WeatherAnimationMode { wind, currents, waves }
+enum _WeatherAnimationMode { wind, currents, waves, none }
 
 enum _AirOverlayType {
   wind,
@@ -71,6 +79,28 @@ enum _OceanOverlayType {
   baa,
   none,
 }
+
+enum _AtmosphericChemistryOverlayType {
+  carbonMonoxideSurfaceConcentration,
+  carbonDioxideSurfaceConcentration,
+  sulfurDioxideSurfaceConcentration,
+  nitrogenDioxideSurfaceConcentration,
+  none,
+}
+
+enum _ParticulatesOverlayType {
+  dustExtinctionAerosolOpticalThickness550Nm,
+  particulateMatterUnder1um,
+  particulateMatterUnder25um,
+  particulateMatterUnder10um,
+  organicMatterAerosolOpticalThickness550Nm,
+  sulfateExtinctionAerosolOpticalThickness550Nm,
+  none,
+}
+
+enum _AuroraOverlayType { aurora, none }
+
+enum _BiologyOverlayType { bleachingAlertArea, none }
 
 const int _minRouteStops = 2;
 const int _maxRouteStops = 6;
@@ -178,6 +208,10 @@ String _weatherModeLabel(_WeatherMode mode) {
   return switch (mode) {
     _WeatherMode.air => 'Air',
     _WeatherMode.ocean => 'Ocean',
+    _WeatherMode.atmosphericChemistry => 'Atmospheric Chemistry',
+    _WeatherMode.particulates => 'Particulates',
+    _WeatherMode.aurora => 'Aurora',
+    _WeatherMode.biology => 'Biology',
     _WeatherMode.none => 'None',
   };
 }
@@ -187,14 +221,16 @@ String _weatherAnimationLabel(_WeatherAnimationMode mode) {
     _WeatherAnimationMode.wind => 'Wind',
     _WeatherAnimationMode.currents => 'Currents',
     _WeatherAnimationMode.waves => 'Waves',
+    _WeatherAnimationMode.none => 'None',
   };
 }
 
-String _weatherAnimationApiValue(_WeatherAnimationMode mode) {
+String? _weatherAnimationApiValue(_WeatherAnimationMode mode) {
   return switch (mode) {
     _WeatherAnimationMode.wind => 'wind',
     _WeatherAnimationMode.currents => 'currents',
     _WeatherAnimationMode.waves => 'waves',
+    _WeatherAnimationMode.none => null,
   };
 }
 
@@ -260,6 +296,102 @@ String? _oceanOverlayApiValue(_OceanOverlayType overlay) {
     _OceanOverlayType.ssta => 'ssta',
     _OceanOverlayType.baa => 'baa',
     _OceanOverlayType.none => null,
+  };
+}
+
+String _atmosphericChemistryOverlayLabel(
+  _AtmosphericChemistryOverlayType overlay,
+) {
+  return switch (overlay) {
+    _AtmosphericChemistryOverlayType.carbonMonoxideSurfaceConcentration =>
+      'Carbon Monoxide Surface Concentration',
+    _AtmosphericChemistryOverlayType.carbonDioxideSurfaceConcentration =>
+      'Carbon Dioxide Surface Concentration',
+    _AtmosphericChemistryOverlayType.sulfurDioxideSurfaceConcentration =>
+      'Sulfur Dioxide Surface Concentration',
+    _AtmosphericChemistryOverlayType.nitrogenDioxideSurfaceConcentration =>
+      'Nitrogen Dioxide Surface Concentration',
+    _AtmosphericChemistryOverlayType.none => 'None',
+  };
+}
+
+String? _atmosphericChemistryOverlayApiValue(
+  _AtmosphericChemistryOverlayType overlay,
+) {
+  return switch (overlay) {
+    _AtmosphericChemistryOverlayType.carbonMonoxideSurfaceConcentration =>
+      'carbonMonoxideSurfaceConcentration',
+    _AtmosphericChemistryOverlayType.carbonDioxideSurfaceConcentration =>
+      'carbonDioxideSurfaceConcentration',
+    _AtmosphericChemistryOverlayType.sulfurDioxideSurfaceConcentration =>
+      'sulfurDioxideSurfaceConcentration',
+    _AtmosphericChemistryOverlayType.nitrogenDioxideSurfaceConcentration =>
+      'nitrogenDioxideSurfaceConcentration',
+    _AtmosphericChemistryOverlayType.none => null,
+  };
+}
+
+String _particulatesOverlayLabel(_ParticulatesOverlayType overlay) {
+  return switch (overlay) {
+    _ParticulatesOverlayType.dustExtinctionAerosolOpticalThickness550Nm =>
+      'Dust Extinction (Aerosol Optical Thickness, 550 nm)',
+    _ParticulatesOverlayType.particulateMatterUnder1um =>
+      'Particulate Matter < 1 µm',
+    _ParticulatesOverlayType.particulateMatterUnder25um =>
+      'Particulate Matter < 2.5 µm',
+    _ParticulatesOverlayType.particulateMatterUnder10um =>
+      'Particulate Matter < 10 µm',
+    _ParticulatesOverlayType.organicMatterAerosolOpticalThickness550Nm =>
+      'Organic Matter Aerosol Optical Thickness (550 nm)',
+    _ParticulatesOverlayType.sulfateExtinctionAerosolOpticalThickness550Nm =>
+      'Sulfate Extinction (Aerosol Optical Thickness, 550 nm)',
+    _ParticulatesOverlayType.none => 'None',
+  };
+}
+
+String? _particulatesOverlayApiValue(_ParticulatesOverlayType overlay) {
+  return switch (overlay) {
+    _ParticulatesOverlayType.dustExtinctionAerosolOpticalThickness550Nm =>
+      'dustExtinctionAerosolOpticalThickness550Nm',
+    _ParticulatesOverlayType.particulateMatterUnder1um =>
+      'particulateMatterUnder1um',
+    _ParticulatesOverlayType.particulateMatterUnder25um =>
+      'particulateMatterUnder25um',
+    _ParticulatesOverlayType.particulateMatterUnder10um =>
+      'particulateMatterUnder10um',
+    _ParticulatesOverlayType.organicMatterAerosolOpticalThickness550Nm =>
+      'organicMatterAerosolOpticalThickness550Nm',
+    _ParticulatesOverlayType.sulfateExtinctionAerosolOpticalThickness550Nm =>
+      'sulfateExtinctionAerosolOpticalThickness550Nm',
+    _ParticulatesOverlayType.none => null,
+  };
+}
+
+String _auroraOverlayLabel(_AuroraOverlayType overlay) {
+  return switch (overlay) {
+    _AuroraOverlayType.aurora => 'Aurora',
+    _AuroraOverlayType.none => 'None',
+  };
+}
+
+String? _auroraOverlayApiValue(_AuroraOverlayType overlay) {
+  return switch (overlay) {
+    _AuroraOverlayType.aurora => 'aurora',
+    _AuroraOverlayType.none => null,
+  };
+}
+
+String _biologyOverlayLabel(_BiologyOverlayType overlay) {
+  return switch (overlay) {
+    _BiologyOverlayType.bleachingAlertArea => 'Bleaching Alert Area',
+    _BiologyOverlayType.none => 'None',
+  };
+}
+
+String? _biologyOverlayApiValue(_BiologyOverlayType overlay) {
+  return switch (overlay) {
+    _BiologyOverlayType.bleachingAlertArea => 'baa',
+    _BiologyOverlayType.none => null,
   };
 }
 
@@ -356,6 +488,12 @@ class _HomeScreenState extends State<HomeScreen> {
   _WeatherAnimationMode _weatherAnimationMode = _WeatherAnimationMode.wind;
   _AirOverlayType _airOverlayType = _AirOverlayType.none;
   _OceanOverlayType _oceanOverlayType = _OceanOverlayType.none;
+  _AtmosphericChemistryOverlayType _atmosphericChemistryOverlayType =
+      _AtmosphericChemistryOverlayType.none;
+  _ParticulatesOverlayType _particulatesOverlayType =
+      _ParticulatesOverlayType.none;
+  _AuroraOverlayType _auroraOverlayType = _AuroraOverlayType.none;
+  _BiologyOverlayType _biologyOverlayType = _BiologyOverlayType.none;
   String _windLevel = 'surface';
   final Map<String, bool> _planetVisibility = <String, bool>{
     for (final planetName in _astronomyPlanetNames) planetName: false,
@@ -969,6 +1107,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return switch (_overlayWeatherMode) {
       _WeatherMode.air => _airOverlayLabel(_airOverlayType),
       _WeatherMode.ocean => _oceanOverlayLabel(_oceanOverlayType),
+      _WeatherMode.atmosphericChemistry => _atmosphericChemistryOverlayLabel(
+          _atmosphericChemistryOverlayType,
+        ),
+      _WeatherMode.particulates => _particulatesOverlayLabel(
+          _particulatesOverlayType,
+        ),
+      _WeatherMode.aurora => _auroraOverlayLabel(_auroraOverlayType),
+      _WeatherMode.biology => _biologyOverlayLabel(_biologyOverlayType),
       _WeatherMode.none => 'None',
     };
   }
@@ -977,12 +1123,25 @@ class _HomeScreenState extends State<HomeScreen> {
     return switch (_overlayWeatherMode) {
       _WeatherMode.air => _airOverlayApiValue(_airOverlayType),
       _WeatherMode.ocean => _oceanOverlayApiValue(_oceanOverlayType),
+      _WeatherMode.atmosphericChemistry =>
+        _atmosphericChemistryOverlayApiValue(
+          _atmosphericChemistryOverlayType,
+        ),
+      _WeatherMode.particulates => _particulatesOverlayApiValue(
+          _particulatesOverlayType,
+        ),
+      _WeatherMode.aurora => _auroraOverlayApiValue(_auroraOverlayType),
+      _WeatherMode.biology => _biologyOverlayApiValue(_biologyOverlayType),
       _WeatherMode.none => null,
     };
   }
 
+  bool get _overlayUsesOceanBackend =>
+      _overlayWeatherMode == _WeatherMode.ocean ||
+      _overlayWeatherMode == _WeatherMode.biology;
+
   bool get _showVectorWeatherPreview =>
-      _weatherOverlayEnabled && _weatherMode != _WeatherMode.none;
+      _weatherOverlayEnabled && _selectedWeatherAnimationApiValue != null;
 
   bool get _showWindAnimation => _showVectorWeatherPreview;
 
@@ -1627,7 +1786,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      final snapshot = _overlayWeatherMode == _WeatherMode.ocean
+      final snapshot = _overlayUsesOceanBackend
           ? await _api.loadOceanOverlaySnapshot(
               overlay: overlay,
               timestampUtc: effectiveTimestampUtc,
@@ -1895,6 +2054,176 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _setAtmosphericChemistryOverlayType(
+    _AtmosphericChemistryOverlayType? overlay,
+  ) {
+    if (overlay == null || _atmosphericChemistryOverlayType == overlay) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _atmosphericChemistryOverlayType = overlay;
+      _weatherOverlaySnapshot = null;
+      _weatherOverlayError = null;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'atmospheric_chemistry_overlay_changed',
+      properties: <String, dynamic>{
+        'overlay': _atmosphericChemistryOverlayType.name,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setParticulatesOverlayType(_ParticulatesOverlayType? overlay) {
+    if (overlay == null || _particulatesOverlayType == overlay) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _particulatesOverlayType = overlay;
+      _weatherOverlaySnapshot = null;
+      _weatherOverlayError = null;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'particulates_overlay_changed',
+      properties: <String, dynamic>{
+        'overlay': _particulatesOverlayType.name,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setAuroraOverlayType(_AuroraOverlayType? overlay) {
+    if (overlay == null || _auroraOverlayType == overlay) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _auroraOverlayType = overlay;
+      _weatherOverlaySnapshot = null;
+      _weatherOverlayError = null;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'aurora_overlay_changed',
+      properties: <String, dynamic>{
+        'overlay': _auroraOverlayType.name,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
+  void _setBiologyOverlayType(_BiologyOverlayType? overlay) {
+    if (overlay == null || _biologyOverlayType == overlay) {
+      return;
+    }
+
+    final wasShowingTimedOverlays = _shouldShowTimedOverlays;
+    setState(() {
+      _biologyOverlayType = overlay;
+      _weatherOverlaySnapshot = null;
+      _weatherOverlayError = null;
+      if (!_shouldLoadWindSnapshot) {
+        _windSnapshot = null;
+        _windError = null;
+      }
+      if (!_shouldLoadWeatherOverlaySnapshot) {
+        _weatherOverlaySnapshot = null;
+        _weatherOverlayError = null;
+      }
+    });
+    if (!wasShowingTimedOverlays && _shouldShowTimedOverlays) {
+      _trackEvent(
+        'timed_overlay_enabled',
+        properties: <String, dynamic>{
+          'astronomy': _shouldShowAstronomy,
+          'wind': _shouldLoadWindSnapshot,
+        },
+      );
+    }
+    _trackEvent(
+      'biology_overlay_changed',
+      properties: <String, dynamic>{
+        'overlay': _biologyOverlayType.name,
+      },
+    );
+    _syncAstronomyTimer();
+    if (_shouldShowTimedOverlays) {
+      _refreshTimedOverlays();
+    } else {
+      _stopAstronomyPlayback();
+    }
+  }
+
   void _setWindLevel(String? level) {
     if (level == null || _windLevel == level) {
       return;
@@ -1913,7 +2242,8 @@ class _HomeScreenState extends State<HomeScreen> {
         'level': level,
       },
     );
-    if (_shouldLoadWindSnapshot && _weatherMode == _WeatherMode.air) {
+    if (_shouldLoadWindSnapshot &&
+        _weatherAnimationMode == _WeatherAnimationMode.wind) {
       _loadWind();
     }
     if (_shouldLoadWeatherOverlaySnapshot &&
@@ -2585,6 +2915,10 @@ class _HomeScreenState extends State<HomeScreen> {
           weatherAnimationMode: _weatherAnimationMode,
           airOverlayType: _airOverlayType,
           oceanOverlayType: _oceanOverlayType,
+          atmosphericChemistryOverlayType: _atmosphericChemistryOverlayType,
+          particulatesOverlayType: _particulatesOverlayType,
+          auroraOverlayType: _auroraOverlayType,
+          biologyOverlayType: _biologyOverlayType,
           windLevel: _windLevel,
           allPlanetsVisible: _allPlanetsVisible,
           planetVisibility: _planetVisibility,
@@ -2722,6 +3056,11 @@ class _HomeScreenState extends State<HomeScreen> {
           onWeatherAnimationModeChanged: _setWeatherAnimationMode,
           onAirOverlayTypeChanged: _setAirOverlayType,
           onOceanOverlayTypeChanged: _setOceanOverlayType,
+          onAtmosphericChemistryOverlayTypeChanged:
+              _setAtmosphericChemistryOverlayType,
+          onParticulatesOverlayTypeChanged: _setParticulatesOverlayType,
+          onAuroraOverlayTypeChanged: _setAuroraOverlayType,
+          onBiologyOverlayTypeChanged: _setBiologyOverlayType,
           onWindLevelChanged: _setWindLevel,
           onShowAllPlanetsChanged: _setAllPlanetsVisibility,
           onShowPlanetChanged: _setPlanetVisibility,
@@ -3095,6 +3434,10 @@ class _IntroPanel extends StatelessWidget {
     required this.weatherAnimationMode,
     required this.airOverlayType,
     required this.oceanOverlayType,
+    required this.atmosphericChemistryOverlayType,
+    required this.particulatesOverlayType,
+    required this.auroraOverlayType,
+    required this.biologyOverlayType,
     required this.windLevel,
     required this.allPlanetsVisible,
     required this.planetVisibility,
@@ -3173,6 +3516,10 @@ class _IntroPanel extends StatelessWidget {
     required this.onWeatherAnimationModeChanged,
     required this.onAirOverlayTypeChanged,
     required this.onOceanOverlayTypeChanged,
+    required this.onAtmosphericChemistryOverlayTypeChanged,
+    required this.onParticulatesOverlayTypeChanged,
+    required this.onAuroraOverlayTypeChanged,
+    required this.onBiologyOverlayTypeChanged,
     required this.onWindLevelChanged,
     required this.onShowAllPlanetsChanged,
     required this.onShowPlanetChanged,
@@ -3221,6 +3568,10 @@ class _IntroPanel extends StatelessWidget {
   final _WeatherAnimationMode weatherAnimationMode;
   final _AirOverlayType airOverlayType;
   final _OceanOverlayType oceanOverlayType;
+  final _AtmosphericChemistryOverlayType atmosphericChemistryOverlayType;
+  final _ParticulatesOverlayType particulatesOverlayType;
+  final _AuroraOverlayType auroraOverlayType;
+  final _BiologyOverlayType biologyOverlayType;
   final String windLevel;
   final bool allPlanetsVisible;
   final Map<String, bool> planetVisibility;
@@ -3299,6 +3650,12 @@ class _IntroPanel extends StatelessWidget {
   final ValueChanged<_WeatherAnimationMode?> onWeatherAnimationModeChanged;
   final ValueChanged<_AirOverlayType?> onAirOverlayTypeChanged;
   final ValueChanged<_OceanOverlayType?> onOceanOverlayTypeChanged;
+  final ValueChanged<_AtmosphericChemistryOverlayType?>
+      onAtmosphericChemistryOverlayTypeChanged;
+  final ValueChanged<_ParticulatesOverlayType?>
+      onParticulatesOverlayTypeChanged;
+  final ValueChanged<_AuroraOverlayType?> onAuroraOverlayTypeChanged;
+  final ValueChanged<_BiologyOverlayType?> onBiologyOverlayTypeChanged;
   final ValueChanged<String?> onWindLevelChanged;
   final ValueChanged<bool> onShowAllPlanetsChanged;
   final void Function(String planetName, bool isVisible) onShowPlanetChanged;
@@ -3333,13 +3690,26 @@ class _IntroPanel extends StatelessWidget {
     final overlayMode =
         weatherMode == _WeatherMode.none ? lastNonNoneWeatherMode : weatherMode;
     final selectedAnimationLabel = switch (weatherMode) {
-      _WeatherMode.air || _WeatherMode.ocean =>
+      _WeatherMode.air ||
+      _WeatherMode.ocean ||
+      _WeatherMode.atmosphericChemistry ||
+      _WeatherMode.particulates ||
+      _WeatherMode.aurora ||
+      _WeatherMode.biology =>
         _weatherAnimationLabel(weatherAnimationMode),
       _WeatherMode.none => 'None',
     };
     final selectedOverlayLabel = switch (overlayMode) {
       _WeatherMode.air => _airOverlayLabel(airOverlayType),
       _WeatherMode.ocean => _oceanOverlayLabel(oceanOverlayType),
+      _WeatherMode.atmosphericChemistry => _atmosphericChemistryOverlayLabel(
+          atmosphericChemistryOverlayType,
+        ),
+      _WeatherMode.particulates => _particulatesOverlayLabel(
+          particulatesOverlayType,
+        ),
+      _WeatherMode.aurora => _auroraOverlayLabel(auroraOverlayType),
+      _WeatherMode.biology => _biologyOverlayLabel(biologyOverlayType),
       _WeatherMode.none => 'None',
     };
     return Card(
@@ -3497,7 +3867,7 @@ class _IntroPanel extends StatelessWidget {
                     value: weatherOverlayEnabled,
                     title: const Text('Enable weather overlay'),
                     subtitle: const Text(
-                      'Starts off by default. Turn this on before loading air or ocean layers.',
+                      'Starts off by default. Turn this on before loading air, ocean, atmospheric chemistry, or particulate layers.',
                     ),
                     onChanged: onWeatherOverlayEnabledChanged,
                   ),
@@ -3524,6 +3894,26 @@ class _IntroPanel extends StatelessWidget {
                         label: 'Ocean',
                         subtitle: 'Currents, waves, and ocean surface fields.',
                       ),
+                      _ChoiceItem(
+                        value: _WeatherMode.atmosphericChemistry,
+                        label: 'Atmospheric Chemistry',
+                        subtitle: 'Trace gas concentration fields.',
+                      ),
+                      _ChoiceItem(
+                        value: _WeatherMode.particulates,
+                        label: 'Particulates',
+                        subtitle: 'Aerosol and particulate concentration fields.',
+                      ),
+                      _ChoiceItem(
+                        value: _WeatherMode.aurora,
+                        label: 'Aurora',
+                        subtitle: 'Auroral activity overlay.',
+                      ),
+                      _ChoiceItem(
+                        value: _WeatherMode.biology,
+                        label: 'Biology',
+                        subtitle: 'Biological surface stress fields.',
+                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -3537,6 +3927,11 @@ class _IntroPanel extends StatelessWidget {
                         weatherMode != _WeatherMode.none,
                     onChanged: onWeatherAnimationModeChanged,
                     options: const [
+                      _ChoiceItem(
+                        value: _WeatherAnimationMode.none,
+                        label: 'None',
+                        subtitle: 'Disable flow animation.',
+                      ),
                       _ChoiceItem(
                         value: _WeatherAnimationMode.wind,
                         label: 'Wind',
@@ -3641,7 +4036,7 @@ class _IntroPanel extends StatelessWidget {
                         ),
                       ],
                     )
-                  else
+                  else if (overlayMode == _WeatherMode.ocean)
                     _SelectionField(
                       labelText: 'Overlay',
                       valueText: _oceanOverlayLabel(oceanOverlayType),
@@ -3679,15 +4074,140 @@ class _IntroPanel extends StatelessWidget {
                           subtitle: 'Hide scalar coloring.',
                         ),
                       ],
+                    )
+                  else if (overlayMode == _WeatherMode.atmosphericChemistry)
+                    _SelectionField(
+                      labelText: 'Overlay',
+                      valueText: _atmosphericChemistryOverlayLabel(
+                        atmosphericChemistryOverlayType,
+                      ),
+                      currentValue: atmosphericChemistryOverlayType,
+                      enabled: weatherOverlayEnabled,
+                      onChanged: onAtmosphericChemistryOverlayTypeChanged,
+                      options: const [
+                        _ChoiceItem(
+                          value: _AtmosphericChemistryOverlayType
+                              .carbonMonoxideSurfaceConcentration,
+                          label: 'Carbon Monoxide Surface Concentration',
+                        ),
+                        _ChoiceItem(
+                          value: _AtmosphericChemistryOverlayType
+                              .carbonDioxideSurfaceConcentration,
+                          label: 'Carbon Dioxide Surface Concentration',
+                        ),
+                        _ChoiceItem(
+                          value: _AtmosphericChemistryOverlayType
+                              .sulfurDioxideSurfaceConcentration,
+                          label: 'Sulfur Dioxide Surface Concentration',
+                        ),
+                        _ChoiceItem(
+                          value: _AtmosphericChemistryOverlayType
+                              .nitrogenDioxideSurfaceConcentration,
+                          label: 'Nitrogen Dioxide Surface Concentration',
+                        ),
+                        _ChoiceItem(
+                          value: _AtmosphericChemistryOverlayType.none,
+                          label: 'None',
+                          subtitle: 'Hide scalar coloring.',
+                        ),
+                      ],
+                    )
+                  else if (overlayMode == _WeatherMode.particulates)
+                    _SelectionField(
+                      labelText: 'Overlay',
+                      valueText: _particulatesOverlayLabel(
+                        particulatesOverlayType,
+                      ),
+                      currentValue: particulatesOverlayType,
+                      enabled: weatherOverlayEnabled,
+                      onChanged: onParticulatesOverlayTypeChanged,
+                      options: const [
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .dustExtinctionAerosolOpticalThickness550Nm,
+                          label:
+                              'Dust Extinction (Aerosol Optical Thickness, 550 nm)',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .particulateMatterUnder1um,
+                          label: 'Particulate Matter < 1 µm',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .particulateMatterUnder25um,
+                          label: 'Particulate Matter < 2.5 µm',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .particulateMatterUnder10um,
+                          label: 'Particulate Matter < 10 µm',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .organicMatterAerosolOpticalThickness550Nm,
+                          label:
+                              'Organic Matter (Aerosol Optical Thickness, 550 nm)',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType
+                              .sulfateExtinctionAerosolOpticalThickness550Nm,
+                          label:
+                              'Sulfate Extinction (Aerosol Optical Thickness, 550 nm)',
+                        ),
+                        _ChoiceItem(
+                          value: _ParticulatesOverlayType.none,
+                          label: 'None',
+                          subtitle: 'Hide scalar coloring.',
+                        ),
+                      ],
+                    )
+                  else if (overlayMode == _WeatherMode.aurora)
+                    _SelectionField(
+                      labelText: 'Overlay',
+                      valueText: _auroraOverlayLabel(auroraOverlayType),
+                      currentValue: auroraOverlayType,
+                      enabled: weatherOverlayEnabled,
+                      onChanged: onAuroraOverlayTypeChanged,
+                      options: const [
+                        _ChoiceItem(
+                          value: _AuroraOverlayType.aurora,
+                          label: 'Aurora',
+                        ),
+                        _ChoiceItem(
+                          value: _AuroraOverlayType.none,
+                          label: 'None',
+                          subtitle: 'Hide scalar coloring.',
+                        ),
+                      ],
+                    )
+                  else
+                    _SelectionField(
+                      labelText: 'Overlay',
+                      valueText: _biologyOverlayLabel(biologyOverlayType),
+                      currentValue: biologyOverlayType,
+                      enabled: weatherOverlayEnabled,
+                      onChanged: onBiologyOverlayTypeChanged,
+                      options: const [
+                        _ChoiceItem(
+                          value: _BiologyOverlayType.bleachingAlertArea,
+                          label: 'Bleaching Alert Area',
+                        ),
+                        _ChoiceItem(
+                          value: _BiologyOverlayType.none,
+                          label: 'None',
+                          subtitle: 'Hide scalar coloring.',
+                        ),
+                      ],
                     ),
                   const SizedBox(height: 8),
                   Text(
                     !weatherOverlayEnabled
-                        ? 'Weather is turned off by default. Turn it on to animate air or ocean fields and color the map by the selected scale.'
-                        : weatherMode == _WeatherMode.none &&
+                        ? 'Weather is turned off by default. Turn it on to animate air, ocean, atmospheric chemistry, particulate, aurora, or biology fields and color the map by the selected scale.'
+                        : selectedAnimationLabel == 'None' &&
                                 selectedOverlayLabel == 'None'
                             ? 'Weather is enabled, but both animation and scalar coloring are off.'
-                            : weatherMode == _WeatherMode.none
+                            : selectedAnimationLabel == 'None'
                                 ? '$selectedOverlayLabel colors the map by scale without animation.'
                                 : selectedOverlayLabel == 'None'
                                     ? '$selectedAnimationLabel animation stays on as the live preview. Overlay coloring is hidden while None is selected.'

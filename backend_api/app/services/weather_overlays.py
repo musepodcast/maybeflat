@@ -54,6 +54,50 @@ _WEATHER_OVERLAYS: dict[str, _OverlayMetadata] = {
         "label": "Instantaneous Wind Power Density",
         "unit_label": "W/m2",
     },
+    "carbonMonoxideSurfaceConcentration": {
+        "label": "Carbon Monoxide Surface Concentration",
+        "unit_label": "ppm",
+    },
+    "carbonDioxideSurfaceConcentration": {
+        "label": "Carbon Dioxide Surface Concentration",
+        "unit_label": "ppm",
+    },
+    "sulfurDioxideSurfaceConcentration": {
+        "label": "Sulfur Dioxide Surface Concentration",
+        "unit_label": "ppb",
+    },
+    "nitrogenDioxideSurfaceConcentration": {
+        "label": "Nitrogen Dioxide Surface Concentration",
+        "unit_label": "ppb",
+    },
+    "dustExtinctionAerosolOpticalThickness550Nm": {
+        "label": "Dust Extinction (Aerosol Optical Thickness, 550 nm)",
+        "unit_label": "AOT",
+    },
+    "particulateMatterUnder1um": {
+        "label": "Particulate Matter < 1 µm",
+        "unit_label": "ug/m3",
+    },
+    "particulateMatterUnder25um": {
+        "label": "Particulate Matter < 2.5 µm",
+        "unit_label": "ug/m3",
+    },
+    "particulateMatterUnder10um": {
+        "label": "Particulate Matter < 10 µm",
+        "unit_label": "ug/m3",
+    },
+    "organicMatterAerosolOpticalThickness550Nm": {
+        "label": "Organic Matter (Aerosol Optical Thickness, 550 nm)",
+        "unit_label": "AOT",
+    },
+    "sulfateExtinctionAerosolOpticalThickness550Nm": {
+        "label": "Sulfate Extinction (Aerosol Optical Thickness, 550 nm)",
+        "unit_label": "AOT",
+    },
+    "aurora": {
+        "label": "Aurora",
+        "unit_label": "%",
+    },
 }
 
 
@@ -125,9 +169,32 @@ def _scalar_fields(
     standing_wave = math.cos(
         (longitude_radians * 3.2) - (latitude_radians * 0.9) - (hours / 31.0)
     )
-
+    urban_belt = math.pow(_clamp(math.cos(latitude_radians), 0.0, 1.0), 2.4)
+    industrial_wave = max(
+        0.0,
+        math.sin((longitude_radians * 2.8) - (hours / 34.0))
+        + 0.55 * math.cos((latitude_radians * 1.7) + (longitude_radians * 0.9)),
+    )
+    desert_belt = _clamp(
+        math.cos(math.radians(abs(latitude) - 24.0)),
+        0.0,
+        1.0,
+    )
     u_mps, v_mps = _wind_components(timestamp_utc, latitude, longitude, profile)
     wind_speed_mps = math.sqrt((u_mps * u_mps) + (v_mps * v_mps))
+    combustion_signal = _clamp(
+        (0.55 * urban_belt)
+        + (0.3 * industrial_wave)
+        + (0.15 * storm_track)
+        + (0.1 * (1.0 - daylight)),
+        0.0,
+        1.35,
+    )
+    stagnation = _clamp(
+        1.0 - (wind_speed_mps / 18.0) + (0.18 * (1.0 - daylight)),
+        0.0,
+        1.2,
+    )
     air_density = 1.225 * math.exp(-profile["altitude_km"] / 8.5)
 
     temperature_c = (
@@ -236,6 +303,120 @@ def _scalar_fields(
         0.0,
         5400.0,
     )
+    carbon_monoxide_surface_concentration_ppm = _clamp(
+        0.045
+        + (0.22 * combustion_signal * stagnation)
+        + (0.04 * monsoon)
+        + (0.015 * max(0.0, standing_wave)),
+        0.01,
+        0.42,
+    )
+    carbon_dioxide_surface_concentration_ppm = _clamp(
+        414.0
+        + (18.0 * season * math.sin(latitude_radians))
+        + (14.0 * combustion_signal)
+        + (8.0 * stagnation)
+        - (5.5 * daylight * tropicality),
+        388.0,
+        468.0,
+    )
+    sulfur_dioxide_surface_concentration_ppb = _clamp(
+        0.8
+        + (7.2 * industrial_wave * stagnation)
+        + (2.4 * storm_track)
+        + (1.1 * max(0.0, wave)),
+        0.0,
+        22.0,
+    )
+    nitrogen_dioxide_surface_concentration_ppb = _clamp(
+        3.5
+        + (18.0 * combustion_signal * stagnation)
+        + (5.0 * urban_belt)
+        + (2.0 * max(0.0, standing_wave)),
+        0.0,
+        68.0,
+    )
+    dryness = _clamp(
+        (24.0 - monsoon * 8.0 + abs(temperature_c * 0.18) - relative_humidity * 0.22)
+        / 24.0,
+        0.0,
+        1.25,
+    )
+    lofting = _clamp((wind_speed_mps - 3.5) / 12.0, 0.0, 1.2)
+    biomass_burn = _clamp(
+        (0.45 * tropicality * (1.0 - daylight))
+        + (0.35 * combustion_signal)
+        + (0.25 * dryness),
+        0.0,
+        1.2,
+    )
+    sulfate_source = _clamp(
+        (0.55 * industrial_wave * stagnation)
+        + (0.25 * storm_track)
+        + (0.18 * urban_belt),
+        0.0,
+        1.1,
+    )
+    polar_cap = _clamp((abs(latitude) - 52.0) / 28.0, 0.0, 1.0)
+    geomagnetic_wave = 0.5 + (
+        0.5
+        * math.sin((hours / 7.5) + (longitude_radians * 1.7) - (latitude_radians * 0.4))
+    )
+    nightside = _clamp((0.25 - local_solar) / 1.25, 0.0, 1.0)
+    dust_extinction_aot_550 = _clamp(
+        0.01
+        + (0.42 * desert_belt * dryness * lofting)
+        + (0.05 * max(0.0, wave)),
+        0.0,
+        0.85,
+    )
+    particulate_matter_under_1um_ugm3 = _clamp(
+        2.0
+        + (18.0 * combustion_signal * stagnation)
+        + (8.0 * biomass_burn)
+        + (4.0 * sulfate_source),
+        0.0,
+        62.0,
+    )
+    particulate_matter_under_25um_ugm3 = _clamp(
+        particulate_matter_under_1um_ugm3
+        + 3.5
+        + (16.0 * sulfate_source)
+        + (10.0 * biomass_burn)
+        + (8.0 * dust_extinction_aot_550),
+        0.0,
+        120.0,
+    )
+    particulate_matter_under_10um_ugm3 = _clamp(
+        particulate_matter_under_25um_ugm3
+        + 5.0
+        + (55.0 * dust_extinction_aot_550)
+        + (6.0 * lofting),
+        0.0,
+        220.0,
+    )
+    organic_matter_aot_550 = _clamp(
+        0.005
+        + (0.14 * biomass_burn)
+        + (0.05 * combustion_signal * stagnation),
+        0.0,
+        0.32,
+    )
+    sulfate_extinction_aot_550 = _clamp(
+        0.004
+        + (0.11 * sulfate_source)
+        + (0.03 * storm_track),
+        0.0,
+        0.28,
+    )
+    aurora_visibility_chance_percent = _clamp(
+        2.0
+        + (74.0 * polar_cap * nightside * geomagnetic_wave)
+        + (11.0 * polar_cap * max(0.0, standing_wave))
+        - (8.0 * max(0.0, local_solar)),
+        0.0,
+        100.0,
+    )
 
     return {
         "wind": round(wind_speed_mps, 3),
@@ -251,6 +432,47 @@ def _scalar_fields(
         "miseryIndex": round(misery_index, 3),
         "ultravioletIndex": round(ultraviolet_index, 3),
         "instantaneousWindPowerDensity": round(instantaneous_wind_power_density, 3),
+        "carbonMonoxideSurfaceConcentration": round(
+            carbon_monoxide_surface_concentration_ppm,
+            3,
+        ),
+        "carbonDioxideSurfaceConcentration": round(
+            carbon_dioxide_surface_concentration_ppm,
+            3,
+        ),
+        "sulfurDioxideSurfaceConcentration": round(
+            sulfur_dioxide_surface_concentration_ppb,
+            3,
+        ),
+        "nitrogenDioxideSurfaceConcentration": round(
+            nitrogen_dioxide_surface_concentration_ppb,
+            3,
+        ),
+        "dustExtinctionAerosolOpticalThickness550Nm": round(
+            dust_extinction_aot_550,
+            3,
+        ),
+        "particulateMatterUnder1um": round(
+            particulate_matter_under_1um_ugm3,
+            3,
+        ),
+        "particulateMatterUnder25um": round(
+            particulate_matter_under_25um_ugm3,
+            3,
+        ),
+        "particulateMatterUnder10um": round(
+            particulate_matter_under_10um_ugm3,
+            3,
+        ),
+        "organicMatterAerosolOpticalThickness550Nm": round(
+            organic_matter_aot_550,
+            3,
+        ),
+        "sulfateExtinctionAerosolOpticalThickness550Nm": round(
+            sulfate_extinction_aot_550,
+            3,
+        ),
+        "aurora": round(aurora_visibility_chance_percent, 3),
     }
 
 
